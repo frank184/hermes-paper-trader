@@ -63,8 +63,10 @@ Dev-only inference override dry run:
 ```bash
 curl -X POST http://127.0.0.1:8001/decisions/propose \
   -H 'content-type: application/json' \
-  -d '{"symbol":"NVDA","qty":1,"dry_run":true,"auto_size":true,"override_action":"buy","override_confidence":0.9}'
+  -d '{"symbol":"NVDA","qty":1,"dry_run":true,"auto_size":true,"strategy_name":"trend_following","intended_holding_period":"1-5 trading days","override_action":"buy","override_confidence":0.9}'
 ```
+
+Every persisted decision includes strategy name, intended holding period, and a structured strategy plan. These fields are the handoff point for future scheduled Alpaca automation.
 
 Seed labeled backtest data for inference training:
 

@@ -47,8 +47,13 @@ For dev-only paper plumbing tests, `run_trading_tick` and `propose_trade_decisio
 override_action
 override_confidence
 override_predicted_return
+strategy_name
+intended_holding_period
+strategy_plan
 ```
 
 These override inference only. The orchestrator still applies policy.
+
+`strategy_name`, `intended_holding_period`, and `strategy_plan` do not override policy. They document the thesis and expected hold length so later monitoring/algo jobs know when to review or exit.
 
 Use `run_backtest_seed` to create historical labeled rows for training without placing paper orders.

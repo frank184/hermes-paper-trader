@@ -58,9 +58,13 @@ run_backtest_sweep
   "max_symbols": 3,
   "qty": 1,
   "auto_size": true,
-  "dry_run": true
+  "dry_run": true,
+  "strategy_name": "trend_following",
+  "intended_holding_period": "1-5 trading days"
 }
 ```
+
+`run_trading_tick` and `propose_trade_decision` accept `strategy_name`, `intended_holding_period`, and `strategy_plan`. Use them whenever Hermes has a thesis like "mean reversion over three months" or "intraday breakout watch"; the orchestrator persists that context with the decision.
 
 `list_symbols`, `add_symbol`, `disable_symbol`, and `import_symbols` control the Postgres-backed tradable universe. Env vars seed this table, but the DB is the runtime source of truth.
 

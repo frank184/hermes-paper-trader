@@ -13,7 +13,7 @@ POST /decisions/propose
   -> POST inference-api /predict
   -> insert inference_runs
   -> evaluate policy
-  -> insert agent_decisions
+  -> insert agent_decisions with strategy_name, intended_holding_period, strategy_plan
   -> return decision
 ```
 
@@ -81,6 +81,21 @@ POST /decisions/propose { dry_run: false }
 ```
 
 Policy can still reject the decision. Rejections are persisted.
+
+## Strategy Plan Flow
+
+Every decision should carry a thesis and expected hold length:
+
+```text
+Hermes / MCP request
+  -> strategy_name
+  -> intended_holding_period
+  -> strategy_plan
+  -> orchestrator persists these on agent_decisions
+  -> future monitoring/algo jobs can schedule reviews and exits
+```
+
+If Hermes does not provide a holding period, the orchestrator defaults to `1-5 trading days`. Model artifacts can later provide their own horizon in `raw_output`.
 
 ## Hermes Tool Flow
 

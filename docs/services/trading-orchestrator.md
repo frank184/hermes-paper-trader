@@ -117,6 +117,26 @@ Decision responses include a `sizing` block:
 
 That lets the orchestrator reduce something like `SPY qty=1` under the configured trade cap instead of rejecting solely because one share is too expensive.
 
+Decision responses also include a `strategy_plan` block, and the same data is persisted on `agent_decisions`:
+
+```json
+{
+  "strategy_name": "trend_following",
+  "intended_holding_period": "1-5 trading days",
+  "monitoring": {
+    "review_after": "1-5 trading days",
+    "exit_on": [
+      "policy breach",
+      "opposite model signal",
+      "risk limit breach",
+      "holding period expires"
+    ]
+  }
+}
+```
+
+The holding period is required decision context. A short-horizon signal and a three-month thesis should not be evaluated the same way, and future Alpaca automation should use this field when scheduling reviews or exits.
+
 For dev-only paper testing, decision and tick requests can include an inference override:
 
 ```json
@@ -161,6 +181,8 @@ Decision requests can write to:
 - `backtest_trades`
 
 Order reads can refresh `paper_orders` from Alpaca even when the order has not filled yet.
+
+`agent_decisions.strategy_name`, `agent_decisions.intended_holding_period`, and `agent_decisions.strategy_plan` are the audit contract for future automated monitoring jobs.
 
 ## Runtime Path
 

@@ -327,6 +327,9 @@ async def run_tick(request: TickRequest) -> dict[str, Any]:
                         qty=request.qty,
                         dry_run=request.dry_run,
                         auto_size=request.auto_size,
+                        strategy_name=request.strategy_name or request.discovery_strategy,
+                        intended_holding_period=request.intended_holding_period,
+                        strategy_plan=request.strategy_plan,
                         override_action=request.override_action,
                         override_confidence=request.override_confidence,
                         override_predicted_return=request.override_predicted_return,
@@ -587,6 +590,7 @@ async def propose_decision(request: DecisionRequest) -> dict[str, Any]:
     prediction = _apply_prediction_override(settings, prediction, request)
     sizing = size_order(settings, request.qty, float(bar["close"]), request.auto_size)
     effective_qty = float(sizing["effective_qty"])
+    decision_plan = _decision_plan(request, prediction, features, sizing)
     policy = evaluate_policy(
         settings,
         prediction,
@@ -644,8 +648,10 @@ async def propose_decision(request: DecisionRequest) -> dict[str, Any]:
         decision_id = conn.execute(
             """
             insert into agent_decisions
-              (inference_run_id, symbol, proposed_action, proposed_qty, rationale, policy_status, policy_reasons, final_action)
-            values (%s, %s, %s, %s, %s, %s, %s, %s)
+              (inference_run_id, symbol, proposed_action, proposed_qty, rationale,
+               strategy_name, intended_holding_period, strategy_plan,
+               policy_status, policy_reasons, final_action)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             returning id
             """,
             (
@@ -654,6 +660,9 @@ async def propose_decision(request: DecisionRequest) -> dict[str, Any]:
                 prediction.predicted_action,
                 effective_qty,
                 _decision_rationale(request.qty, sizing),
+                decision_plan["strategy_name"],
+                decision_plan["intended_holding_period"],
+                Jsonb(decision_plan),
                 policy.status,
                 Jsonb(policy.reasons),
                 policy.final_action,
@@ -715,6 +724,7 @@ async def propose_decision(request: DecisionRequest) -> dict[str, Any]:
         "features": features,
         "prediction": prediction.model_dump(),
         "sizing": sizing,
+        "strategy_plan": decision_plan,
         "policy": policy.model_dump(),
         "order": order,
     }
@@ -885,8 +895,9 @@ async def _backtest_symbol(
                     """
                     insert into agent_decisions
                       (inference_run_id, symbol, proposed_action, proposed_qty, rationale,
+                       strategy_name, intended_holding_period, strategy_plan,
                        policy_status, policy_reasons, final_action, created_at)
-                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     returning id
                     """,
                     (
@@ -895,6 +906,18 @@ async def _backtest_symbol(
                         prediction.predicted_action,
                         effective_qty,
                         f"historical backtest seed using {request.strategy}",
+                        request.strategy,
+                        f"{request.horizon_days}d",
+                        Jsonb(
+                            {
+                                "strategy_name": request.strategy,
+                                "intended_holding_period": f"{request.horizon_days}d",
+                                "horizon_days": request.horizon_days,
+                                "label_threshold": request.label_threshold,
+                                "source": "backtest",
+                                "plan": "Enter on historical signal, evaluate outcome at configured horizon.",
+                            }
+                        ),
                         "backtest",
                         Jsonb([]),
                         prediction.predicted_action,
@@ -1098,6 +1121,58 @@ def _decision_rationale(requested_qty: float, sizing: dict[str, Any]) -> str:
             "to stay under max notional per trade."
         )
     return "v0 uses inference output directly; Hermes narration can be added above this API."
+
+
+def _decision_plan(
+    request: DecisionRequest,
+    prediction: Prediction,
+    features: dict[str, Any],
+    sizing: dict[str, Any],
+) -> dict[str, Any]:
+    raw_output = prediction.raw_output or {}
+    strategy_name = (
+        request.strategy_name
+        or raw_output.get("strategy")
+        or raw_output.get("model_strategy")
+        or prediction.model_name
+    )
+    intended_holding_period = (
+        request.intended_holding_period
+        or raw_output.get("intended_holding_period")
+        or raw_output.get("holding_period")
+        or raw_output.get("horizon")
+        or "1-5 trading days"
+    )
+    plan = {
+        "strategy_name": strategy_name,
+        "intended_holding_period": intended_holding_period,
+        "predicted_action": prediction.predicted_action,
+        "predicted_return": prediction.predicted_return,
+        "confidence": prediction.confidence,
+        "model_name": prediction.model_name,
+        "model_version": prediction.model_version,
+        "feature_version": features.get("feature_version"),
+        "entry": {
+            "symbol": prediction.symbol,
+            "qty": sizing.get("effective_qty"),
+            "notional": sizing.get("effective_notional"),
+            "reason": "model_signal",
+        },
+        "monitoring": {
+            "review_after": intended_holding_period,
+            "exit_on": [
+                "policy breach",
+                "opposite model signal",
+                "risk limit breach",
+                "holding period expires",
+            ],
+        },
+        "notes": "Holding period is an intent for later outcome labeling and automated monitoring; it is not a guarantee.",
+    }
+    plan.update(request.strategy_plan)
+    plan["strategy_name"] = strategy_name
+    plan["intended_holding_period"] = intended_holding_period
+    return plan
 
 
 def _apply_prediction_override(settings: Any, prediction: Any, request: DecisionRequest) -> Any:

@@ -2,6 +2,11 @@ from typing import Any
 
 
 def ensure_runtime_schema(conn: Any) -> None:
+    conn.execute("alter table agent_decisions add column if not exists strategy_name text")
+    conn.execute("alter table agent_decisions add column if not exists intended_holding_period text")
+    conn.execute(
+        "alter table agent_decisions add column if not exists strategy_plan jsonb not null default '{}'"
+    )
     conn.execute(
         """
         create table if not exists symbols (

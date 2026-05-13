@@ -20,6 +20,9 @@ class DecisionRequest(BaseModel):
     qty: float = Field(default=1, gt=0)
     dry_run: bool = True
     auto_size: bool = True
+    strategy_name: str | None = None
+    intended_holding_period: str | None = None
+    strategy_plan: dict[str, Any] = Field(default_factory=dict)
     override_action: Action | None = None
     override_confidence: float | None = Field(default=None, ge=0, le=1)
     override_predicted_return: float | None = None
@@ -33,6 +36,9 @@ class TickRequest(BaseModel):
     discover_if_empty: bool = True
     discovery_strategy: DiscoveryStrategy = "trend_following"
     max_symbols: int = Field(default=3, ge=1, le=20)
+    strategy_name: str | None = None
+    intended_holding_period: str | None = None
+    strategy_plan: dict[str, Any] = Field(default_factory=dict)
     override_action: Action | None = None
     override_confidence: float | None = Field(default=None, ge=0, le=1)
     override_predicted_return: float | None = None
