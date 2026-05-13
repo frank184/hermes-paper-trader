@@ -27,6 +27,11 @@ Hermes -> trader-mcp -> trading-orchestrator
 ```text
 run_trading_tick
 discover_trade_candidates
+scan_trade_candidates
+list_symbols
+add_symbol
+disable_symbol
+import_symbols
 propose_trade_decision
 get_portfolio_state
 get_open_positions
@@ -34,7 +39,13 @@ get_orders
 get_order
 cancel_order
 get_market_clock
+get_market_bars
+chart_symbol
+chart_backtest
+get_symbol_report
+get_portfolio_report
 run_backtest_seed
+run_backtest_sweep
 ```
 
 `run_trading_tick` accepts explicit symbols, but it can also discover candidates when `symbols` is omitted:
@@ -43,7 +54,7 @@ run_backtest_seed
 {
   "symbols": [],
   "discover_if_empty": true,
-  "discovery_strategy": "random",
+  "discovery_strategy": "trend_following",
   "max_symbols": 3,
   "qty": 1,
   "auto_size": true,
@@ -51,7 +62,11 @@ run_backtest_seed
 }
 ```
 
-`discover_trade_candidates` exposes discovery without running decisions, which is useful when you want Hermes to inspect candidates first.
+`list_symbols`, `add_symbol`, `disable_symbol`, and `import_symbols` control the Postgres-backed tradable universe. Env vars seed this table, but the DB is the runtime source of truth.
+
+`discover_trade_candidates` and `scan_trade_candidates` expose strategy-aware discovery without running decisions, which is useful when you want Hermes to inspect candidates first.
+
+`get_market_bars`, `chart_symbol`, `chart_backtest`, `get_symbol_report`, and `get_portfolio_report` fetch data through the orchestrator, persist useful market rows, and return structured chart/report artifacts.
 
 `get_open_positions` returns current Alpaca paper positions and persists a position snapshot.
 
@@ -62,6 +77,8 @@ run_backtest_seed
 `cancel_order` requests cancellation for a pending paper order by Alpaca order id.
 
 `run_backtest_seed` calls `/backtests/run` and persists labeled historical rows for model training. It does not submit paper orders.
+
+`run_backtest_sweep` tries a small grid of strategies, horizons, and label thresholds. It does not submit paper orders.
 
 ## MCP Notes
 

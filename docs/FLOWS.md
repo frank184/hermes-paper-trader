@@ -45,13 +45,28 @@ Used when Hermes asks to run a tick without specifying symbols.
 
 ```text
 POST /ticks/run { symbols: [], discover_if_empty: true }
-  -> discover candidates from SYMBOL_ALLOWLIST
-  -> fetch recent bars for each candidate
+  -> seed/read enabled symbols from Postgres
+  -> fetch recent + daily bars for each candidate
+  -> upsert bars into market_bars
   -> size requested qty under max notional
   -> run normal dry-run decision flow for selected candidates
 ```
 
-Discovery is bounded. It does not scan the whole market in v0.
+Discovery is bounded by the enabled Postgres symbol universe. Env only seeds the universe.
+
+## Symbol Control Flow
+
+Used to change what Trader is allowed to scan without editing Compose.
+
+```text
+Trader MCP add_symbol / import_symbols
+  -> orchestrator validates symbol with Alpaca when requested
+  -> upsert symbols
+  -> attach symbol to a universe
+  -> future scans and policy checks read DB state
+```
+
+Disabling a symbol prevents new scans/trades for it without deleting historical data.
 
 ## Paper Order Decision
 

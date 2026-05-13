@@ -25,7 +25,17 @@ Discover candidates:
 ```bash
 curl -X POST http://127.0.0.1:8001/symbols/discover \
   -H 'content-type: application/json' \
-  -d '{"max_symbols":3,"strategy":"random","qty":1,"auto_size":true}'
+  -d '{"max_symbols":3,"strategy":"trend_following","qty":1,"auto_size":true}'
+```
+
+List or add DB-controlled symbols:
+
+```bash
+curl http://127.0.0.1:8001/symbols
+
+curl -X POST http://127.0.0.1:8001/symbols \
+  -H 'content-type: application/json' \
+  -d '{"symbol":"GOOGL","enabled":true,"universes":["core"],"validate_with_alpaca":true}'
 ```
 
 Current positions:
@@ -61,7 +71,7 @@ Seed labeled backtest data for inference training:
 ```bash
 curl -X POST http://127.0.0.1:8001/backtests/run \
   -H 'content-type: application/json' \
-  -d '{"symbols":["NVDA"],"days":120,"horizon_days":1,"strategy":"moving_average","persist":true}'
+  -d '{"symbols":["NVDA"],"days":120,"horizon_days":1,"strategy":"trend_following","persist":true}'
 ```
 
 Environment note: this service receives shared Alpaca settings from root `.env`, not Hermes-only secrets from `services/hermes-workspace/.env`.

@@ -28,11 +28,22 @@ HERMES_UID
 HERMES_GID
 JUPYTER_TOKEN
 SYMBOL_ALLOWLIST
+SYMBOL_ALLOWLIST_SEED
+SYMBOL_DB_CONTROL_ENABLED
+SYMBOL_REQUIRE_ENABLED
 MAX_NOTIONAL_PER_TRADE
+MAX_POSITION_NOTIONAL
 MAX_DAILY_TRADES
 MIN_CONFIDENCE_TO_TRADE
+MIN_SHORT_CONFIDENCE
 COOLDOWN_MINUTES
+ALLOW_SHORTS
+REQUIRE_TREND_ALIGNMENT
 ```
+
+`SYMBOL_ALLOWLIST` is deprecated. Use `SYMBOL_ALLOWLIST_SEED` to seed Postgres on startup, then manage symbols through Trader MCP or the orchestrator `/symbols` endpoints. The database is the runtime source of truth when `SYMBOL_DB_CONTROL_ENABLED=true`.
+
+Short selling is disabled by default with `ALLOW_SHORTS=false`. If enabled, `MIN_SHORT_CONFIDENCE` and `REQUIRE_TREND_ALIGNMENT` still guard new short positions.
 
 ## Hermes `.env`
 

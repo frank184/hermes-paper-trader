@@ -17,7 +17,9 @@ Local port:
 ## Responsibilities
 
 - Fetch Alpaca paper market/account data through `alpaca-py`.
-- Discover candidate symbols from the configured allowlist.
+- Seed and manage the Postgres-backed symbol universe.
+- Discover candidate symbols from enabled DB symbols.
+- Fetch and persist reusable market bars.
 - Auto-size requested quantities under the max notional rule.
 - Compute feature snapshots.
 - Call `inference-api`.
@@ -35,10 +37,21 @@ GET  /orders
 GET  /orders/{order_id}
 DELETE /orders/{order_id}
 GET  /market/clock
+GET  /symbols
+POST /symbols
+PATCH /symbols/{symbol}
+POST /symbols/import
+POST /market/bars
+POST /charts/candles
+POST /charts/equity-curve
+POST /reports/symbol
+POST /reports/portfolio
 POST /backtests/run
+POST /backtests/sweep
 POST /decisions/propose
 POST /ticks/run
 POST /symbols/discover
+POST /symbols/scan
 ```
 
 `/orders` reads live Alpaca paper orders and refreshes local `paper_orders` rows. This is the endpoint to use when an order is visible in Alpaca as `accepted`, `new`, `filled`, `canceled`, or similar. An accepted order with `filled_qty=0` is not a position yet.
@@ -47,7 +60,13 @@ POST /symbols/discover
 
 `DELETE /orders/{order_id}` requests cancellation for a pending Alpaca paper order.
 
-`/backtests/run` fetches historical daily bars, computes features at each historical point, looks forward by `horizon_days`, and writes labeled training rows. It is the preferred way to seed `trade_outcomes` before the paper agent has enough real fills.
+`/symbols` is the runtime control surface for tradable symbols. `SYMBOL_ALLOWLIST_SEED` only seeds the DB; enabled rows in Postgres decide what Trader may scan or trade.
+
+`/market/bars` fetches Alpaca historical bars and upserts them into `market_bars`. Scans, reports, charts, live decisions, and backtests also persist bars so research data accumulates naturally.
+
+Chart and report endpoints write JSON artifacts into `./artifacts` through the orchestrator container's `/artifacts` mount.
+
+`/backtests/run` fetches historical daily bars, computes features at each historical point, looks forward by `horizon_days`, and writes labeled training rows plus `backtest_trades`. It is the preferred way to seed `trade_outcomes` before the paper agent has enough real fills.
 
 Example:
 
@@ -57,7 +76,7 @@ Example:
   "days": 120,
   "horizon_days": 1,
   "label_threshold": 0.0025,
-  "strategy": "moving_average",
+  "strategy": "trend_following",
   "persist": true
 }
 ```
@@ -70,14 +89,17 @@ This writes:
 - `agent_decisions`
 - `trade_outcomes`
 - `backtest_runs`
+- `backtest_trades`
 
 Then run `./scripts/train.sh` to train the inference model from those labels.
 
-`/symbols/discover` ranks symbols from `SYMBOL_ALLOWLIST` using one of:
+`/symbols/discover` and `/symbols/scan` rank enabled symbols using one of:
 
-- `random`: bounded random sample from eligible allowlist symbols.
+- `trend_following`: multi-week return and moving-average alignment.
+- `breakout`: proximity to recent highs plus volume anomaly.
+- `mean_reversion_watch`: pullback candidates inside stronger trend context.
 - `liquidity`: latest minute volume.
-- `momentum`: recent return plus moving-average distance, penalized by volatility.
+- `random_baseline`: bounded random sample from eligible DB symbols.
 
 `/ticks/run` can receive explicit symbols or discover candidates when `symbols` is empty and `discover_if_empty=true`.
 
@@ -110,10 +132,13 @@ This replaces the inference action/confidence but does not bypass policy. Allowl
 ## Policy Checks
 
 - Paper trading only.
-- Symbol allowlist.
+- Symbol enabled in Postgres.
 - Max notional per trade.
+- Max position notional.
 - Max daily trades.
 - Minimum confidence.
+- Short-selling disabled by default.
+- Short confidence and trend-alignment checks when shorts are enabled.
 - Per-symbol cooldown.
 - `hold` is persisted but never submitted as an order.
 
@@ -130,7 +155,10 @@ Decision requests can write to:
 - `paper_orders`
 - `portfolio_snapshots`
 - `position_snapshots`
+- `market_bars`
+- `symbols`
 - `backtest_runs`
+- `backtest_trades`
 
 Order reads can refresh `paper_orders` from Alpaca even when the order has not filled yet.
 
