@@ -41,6 +41,7 @@ Then open `http://127.0.0.1:8888`.
 
 ## Project Docs
 
+- [Hermes Command Guide](HERMES.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Environment Variables](docs/ENVIRONMENT.md)
 - [Runtime Flows](docs/FLOWS.md)
