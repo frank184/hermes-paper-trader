@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "presets": [
+    {
+      "id": "hermes_trader",
+      "name": "Hermes Trader",
+      "description": "Project-local Trader MCP for paper trading state, order inspection, candidate discovery, backtest seeding, and policy-gated paper decisions.",
+      "category": "Custom",
+      "homepage": "https://github.com/nousresearch/hermes-agent",
+      "tags": ["trading", "paper", "alpaca", "local"],
+      "template": {
+        "name": "hermes_trader",
+        "transportType": "http",
+        "url": "http://trader-mcp:8000/mcp",
+        "enabled": true,
+        "authType": "none",
+        "toolMode": "include",
+        "includeTools": [
+          "run_trading_tick",
+          "discover_trade_candidates",
+          "propose_trade_decision",
+          "get_portfolio_state",
+          "get_open_positions",
+          "get_orders",
+          "get_order",
+          "cancel_order",
+          "get_market_clock",
+          "run_backtest_seed"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,398 @@
+{
+  "info": {
+    "name": "Hermes Paper Trader",
+    "_postman_id": "a9479f50-c1ef-4c0e-a6e3-hermes-paper-trader",
+    "description": "Smoke tests for the trading orchestrator, inference API, and Trader MCP.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "orchestrator_base_url",
+      "value": "http://127.0.0.1:8001"
+    },
+    {
+      "key": "inference_base_url",
+      "value": "http://127.0.0.1:8002"
+    },
+    {
+      "key": "trader_mcp_url",
+      "value": "http://127.0.0.1:8004/mcp"
+    },
+    {
+      "key": "mcp_session_id",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "REST - Trading Orchestrator",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{orchestrator_base_url}}/health",
+            "description": "Checks whether the orchestrator is reachable."
+          }
+        },
+        {
+          "name": "Portfolio State",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{orchestrator_base_url}}/portfolio/state",
+            "description": "Fetches account cash, equity, and buying power from Alpaca paper trading."
+          }
+        },
+        {
+          "name": "Current Positions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{orchestrator_base_url}}/portfolio/positions",
+            "description": "Fetches current Alpaca paper positions."
+          }
+        },
+        {
+          "name": "Current Orders",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{orchestrator_base_url}}/orders?status=open&limit=20",
+            "description": "Fetches live Alpaca paper orders. This is where accepted-but-not-filled orders show up."
+          }
+        },
+        {
+          "name": "Discover Symbols",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"max_symbols\":3,\"strategy\":\"random\",\"qty\":1,\"auto_size\":true}"
+            },
+            "url": "{{orchestrator_base_url}}/symbols/discover",
+            "description": "Discovers eligible symbols from the allowlist."
+          }
+        },
+        {
+          "name": "Propose Decision - Dry Run",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"symbol\":\"NVDA\",\"qty\":1,\"dry_run\":true,\"auto_size\":true}"
+            },
+            "url": "{{orchestrator_base_url}}/decisions/propose",
+            "description": "Runs one decision without submitting an order."
+          }
+        },
+        {
+          "name": "Propose Decision - Override Buy Dry Run",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"symbol\":\"NVDA\",\"qty\":1,\"dry_run\":true,\"auto_size\":true,\"override_action\":\"buy\",\"override_confidence\":0.9}"
+            },
+            "url": "{{orchestrator_base_url}}/decisions/propose",
+            "description": "Dev-only test: overrides inference while still running policy."
+          }
+        },
+        {
+          "name": "Run Tick - Discover Symbols Dry Run",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"symbols\":[],\"dry_run\":true,\"discover_if_empty\":true,\"max_symbols\":3,\"qty\":1,\"auto_size\":true}"
+            },
+            "url": "{{orchestrator_base_url}}/ticks/run",
+            "description": "Discovers candidates, then runs dry decisions."
+          }
+        }
+      ]
+    },
+    {
+      "name": "REST - Inference API",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{inference_base_url}}/health"
+          }
+        },
+        {
+          "name": "Predict",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"symbol\":\"NVDA\",\"features\":{\"returns_1\":0.001,\"returns_5\":0.003,\"returns_20\":0.01,\"moving_average_distance_20\":0.002,\"volatility_20\":0.01,\"volume_zscore\":0.5,\"volume\":1000000}}"
+            },
+            "url": "{{inference_base_url}}/predict"
+          }
+        }
+      ]
+    },
+    {
+      "name": "MCP - Trader MCP",
+      "item": [
+        {
+          "name": "1. Initialize",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"postman\",\"version\":\"0.1.0\"}}}"
+            },
+            "url": "{{trader_mcp_url}}",
+            "description": "Run this first. Copy the mcp-session-id response header into the collection variable."
+          }
+        },
+        {
+          "name": "2. Initialized Notification",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream"
+              },
+              {
+                "key": "mcp-session-id",
+                "value": "{{mcp_session_id}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":{}}"
+            },
+            "url": "{{trader_mcp_url}}"
+          }
+        },
+        {
+          "name": "3. Tools List",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream"
+              },
+              {
+                "key": "mcp-session-id",
+                "value": "{{mcp_session_id}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\",\"params\":{}}"
+            },
+            "url": "{{trader_mcp_url}}"
+          }
+        },
+        {
+          "name": "4. Tools Call - get_portfolio_state",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream"
+              },
+              {
+                "key": "mcp-session-id",
+                "value": "{{mcp_session_id}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"get_portfolio_state\",\"arguments\":{}}}"
+            },
+            "url": "{{trader_mcp_url}}"
+          }
+        },
+        {
+          "name": "5. Tools Call - get_open_positions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream"
+              },
+              {
+                "key": "mcp-session-id",
+                "value": "{{mcp_session_id}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"get_open_positions\",\"arguments\":{}}}"
+            },
+            "url": "{{trader_mcp_url}}"
+          }
+        },
+        {
+          "name": "6. Tools Call - get_orders",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream"
+              },
+              {
+                "key": "mcp-session-id",
+                "value": "{{mcp_session_id}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"get_orders\",\"arguments\":{\"status\":\"open\",\"limit\":20}}}"
+            },
+            "url": "{{trader_mcp_url}}"
+          }
+        },
+        {
+          "name": "7. Tools Call - discover_trade_candidates",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream"
+              },
+              {
+                "key": "mcp-session-id",
+                "value": "{{mcp_session_id}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"discover_trade_candidates\",\"arguments\":{\"max_symbols\":3,\"strategy\":\"random\",\"qty\":1,\"auto_size\":true}}}"
+            },
+            "url": "{{trader_mcp_url}}"
+          }
+        },
+        {
+          "name": "8. Tools Call - propose_trade_decision_override_buy",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream"
+              },
+              {
+                "key": "mcp-session-id",
+                "value": "{{mcp_session_id}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/call\",\"params\":{\"name\":\"propose_trade_decision\",\"arguments\":{\"symbol\":\"NVDA\",\"qty\":1,\"dry_run\":true,\"auto_size\":true,\"override_action\":\"buy\",\"override_confidence\":0.9}}}"
+            },
+            "url": "{{trader_mcp_url}}"
+          }
+        },
+        {
+          "name": "9. Tools Call - run_trading_tick_with_discovery",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream"
+              },
+              {
+                "key": "mcp-session-id",
+                "value": "{{mcp_session_id}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"run_trading_tick\",\"arguments\":{\"symbols\":[],\"dry_run\":true,\"discover_if_empty\":true,\"max_symbols\":3,\"qty\":1,\"auto_size\":true}}}"
+            },
+            "url": "{{trader_mcp_url}}"
+          }
+        }
+      ]
+    }
+  ]
+}

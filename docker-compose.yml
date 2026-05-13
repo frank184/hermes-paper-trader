@@ -1,0 +1,120 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: hermes_trader
+      POSTGRES_USER: hermes
+      POSTGRES_PASSWORD: hermes
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hermes -d hermes_trader"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  inference-api:
+    build: ./services/inference-api
+    environment:
+      DATABASE_URL: postgresql://hermes:hermes@postgres:5432/hermes_trader
+      MODEL_DIR: /models
+      MODEL_VERSION: baseline-heuristic-v0
+    ports:
+      - "8002:8000"
+    volumes:
+      - ./models:/models
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  trading-orchestrator:
+    build: ./services/trading-orchestrator
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://hermes:hermes@postgres:5432/hermes_trader
+      INFERENCE_API_URL: http://inference-api:8000
+      ALPACA_PAPER_TRADE: "true"
+      SYMBOL_ALLOWLIST: SPY,QQQ,AAPL,MSFT,NVDA
+      MAX_NOTIONAL_PER_TRADE: "500"
+      MAX_DAILY_TRADES: "5"
+      MIN_CONFIDENCE_TO_TRADE: "0.58"
+      COOLDOWN_MINUTES: "30"
+      ALLOW_INFERENCE_OVERRIDE: ${ALLOW_INFERENCE_OVERRIDE:-true}
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      inference-api:
+        condition: service_started
+
+  trader-mcp:
+    build: ./services/trader-mcp
+    environment:
+      TRADING_ORCHESTRATOR_URL: http://trading-orchestrator:8000
+    ports:
+      - "8004:8000"
+    depends_on:
+      - trading-orchestrator
+
+  hermes-workspace:
+    build: ./services/hermes-workspace
+    env_file:
+      - path: ./services/hermes-workspace/.env
+        required: false
+    environment:
+      HERMES_UID: ${HERMES_UID:-1000}
+      HERMES_GID: ${HERMES_GID:-1000}
+      HERMES_DASHBOARD: "1"
+      HERMES_DASHBOARD_HOST: 0.0.0.0
+      HERMES_DASHBOARD_PORT: "9119"
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: 0.0.0.0
+      HERMES_API_URL: http://127.0.0.1:8642
+      HERMES_DASHBOARD_URL: http://127.0.0.1:9119
+      HERMES_CLI_BIN: /opt/hermes/.venv/bin/hermes
+      HERMES_WORKSPACE_DIR: /opt/data/workspace
+      MCP_PRESETS_SEED_PATH: /opt/data/assets/mcp-presets.seed.json
+    volumes:
+      - ./services/hermes-workspace:/opt/data
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:8642:8642"
+      - "127.0.0.1:9119:9119"
+    depends_on:
+      trader-mcp:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8642/health >/dev/null && curl -fsS http://127.0.0.1:3000/ >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  jupyter:
+    build: ./services/jupyter
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-}
+      DATABASE_URL: postgresql://hermes:hermes@postgres:5432/hermes_trader
+      MODEL_DIR: /home/jovyan/work/models
+      ALPACA_PAPER_TRADE: "true"
+    ports:
+      - "127.0.0.1:8888:8888"
+    volumes:
+      - ./notebooks:/home/jovyan/work
+      - ./models:/home/jovyan/work/models
+    command: start-notebook.py --ServerApp.root_dir=/home/jovyan/work --IdentityProvider.token=${JUPYTER_TOKEN:-} --ServerApp.disable_check_xsrf=True
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
