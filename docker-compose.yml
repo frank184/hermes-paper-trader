@@ -39,12 +39,21 @@ services:
       DATABASE_URL: postgresql://hermes:hermes@postgres:5432/hermes_trader
       INFERENCE_API_URL: http://inference-api:8000
       ALPACA_PAPER_TRADE: "true"
-      SYMBOL_ALLOWLIST: SPY,QQQ,AAPL,MSFT,NVDA
+      SYMBOL_ALLOWLIST_SEED: SPY,QQQ,AAPL,MSFT,NVDA,GOOGL
+      SYMBOL_DB_CONTROL_ENABLED: "true"
+      SYMBOL_REQUIRE_ENABLED: "true"
       MAX_NOTIONAL_PER_TRADE: "500"
+      MAX_POSITION_NOTIONAL: "1000"
       MAX_DAILY_TRADES: "5"
       MIN_CONFIDENCE_TO_TRADE: "0.58"
+      MIN_SHORT_CONFIDENCE: "0.70"
       COOLDOWN_MINUTES: "30"
+      ALLOW_SHORTS: "false"
+      REQUIRE_TREND_ALIGNMENT: "true"
       ALLOW_INFERENCE_OVERRIDE: ${ALLOW_INFERENCE_OVERRIDE:-true}
+      ARTIFACT_DIR: /artifacts
+    volumes:
+      - ./artifacts:/artifacts
     ports:
       - "8001:8000"
     depends_on:

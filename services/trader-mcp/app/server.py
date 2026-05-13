@@ -14,7 +14,7 @@ async def run_trading_tick(
     dry_run: bool = True,
     auto_size: bool = True,
     discover_if_empty: bool = True,
-    discovery_strategy: str = "random",
+    discovery_strategy: str = "trend_following",
     max_symbols: int = 3,
     override_action: str | None = None,
     override_confidence: float | None = None,
@@ -47,11 +47,12 @@ async def run_trading_tick(
 @mcp.tool
 async def discover_trade_candidates(
     max_symbols: int = 3,
-    strategy: str = "random",
+    strategy: str = "trend_following",
     qty: float = 1.0,
     auto_size: bool = True,
+    universe: str | None = None,
 ) -> dict[str, Any]:
-    """Discover eligible symbols from the orchestrator allowlist before running a tick."""
+    """Discover eligible symbols from the orchestrator symbol database before running a tick."""
     async with httpx.AsyncClient(timeout=45) as client:
         response = await client.post(
             f"{_orchestrator_url()}/symbols/discover",
@@ -60,6 +61,98 @@ async def discover_trade_candidates(
                 "strategy": strategy,
                 "qty": qty,
                 "auto_size": auto_size,
+                "universe": universe,
+            },
+        )
+        return _json_or_error(response)
+
+
+@mcp.tool
+async def scan_trade_candidates(
+    max_symbols: int = 5,
+    strategy: str = "trend_following",
+    qty: float = 1.0,
+    auto_size: bool = True,
+    universe: str | None = None,
+) -> dict[str, Any]:
+    """Scan the Postgres-backed symbol universe using a strategy-aware ranking."""
+    async with httpx.AsyncClient(timeout=90) as client:
+        response = await client.post(
+            f"{_orchestrator_url()}/symbols/scan",
+            json={
+                "max_symbols": max_symbols,
+                "strategy": strategy,
+                "qty": qty,
+                "auto_size": auto_size,
+                "universe": universe,
+            },
+        )
+        return _json_or_error(response)
+
+
+@mcp.tool
+async def list_symbols(enabled: bool | None = None, universe: str | None = None) -> dict[str, Any]:
+    """List symbols controlled by the orchestrator's Postgres symbol database."""
+    params: dict[str, Any] = {}
+    if enabled is not None:
+        params["enabled"] = enabled
+    if universe:
+        params["universe"] = universe
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(f"{_orchestrator_url()}/symbols", params=params)
+        return _json_or_error(response)
+
+
+@mcp.tool
+async def add_symbol(
+    symbol: str,
+    enabled: bool = True,
+    universe: str = "core",
+    notes: str | None = None,
+    validate_with_alpaca: bool = True,
+) -> dict[str, Any]:
+    """Add or enable a tradable symbol after optional Alpaca asset validation."""
+    async with httpx.AsyncClient(timeout=45) as client:
+        response = await client.post(
+            f"{_orchestrator_url()}/symbols",
+            json={
+                "symbol": symbol,
+                "enabled": enabled,
+                "notes": notes,
+                "universes": [universe],
+                "validate_with_alpaca": validate_with_alpaca,
+            },
+        )
+        return _json_or_error(response)
+
+
+@mcp.tool
+async def disable_symbol(symbol: str, notes: str | None = None) -> dict[str, Any]:
+    """Disable a symbol in the orchestrator's Postgres symbol database."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.patch(
+            f"{_orchestrator_url()}/symbols/{symbol}",
+            json={"enabled": False, "notes": notes},
+        )
+        return _json_or_error(response)
+
+
+@mcp.tool
+async def import_symbols(
+    symbols: list[str],
+    universe: str = "core",
+    enabled: bool = True,
+    validate_with_alpaca: bool = False,
+) -> dict[str, Any]:
+    """Bulk-import symbols into a named universe."""
+    async with httpx.AsyncClient(timeout=120) as client:
+        response = await client.post(
+            f"{_orchestrator_url()}/symbols/import",
+            json={
+                "symbols": symbols,
+                "universe": universe,
+                "enabled": enabled,
+                "validate_with_alpaca": validate_with_alpaca,
             },
         )
         return _json_or_error(response)
@@ -154,6 +247,80 @@ async def get_market_clock() -> dict[str, Any]:
 
 
 @mcp.tool
+async def get_market_bars(
+    symbols: list[str],
+    timeframe: str = "1Day",
+    days: int = 120,
+    limit: int | None = None,
+    persist: bool = True,
+) -> dict[str, Any]:
+    """Fetch Alpaca market bars through the orchestrator and persist them for research."""
+    async with httpx.AsyncClient(timeout=120) as client:
+        response = await client.post(
+            f"{_orchestrator_url()}/market/bars",
+            json={
+                "symbols": symbols,
+                "timeframe": timeframe,
+                "days": days,
+                "limit": limit,
+                "persist": persist,
+            },
+        )
+        return _json_or_error(response)
+
+
+@mcp.tool
+async def chart_symbol(
+    symbol: str,
+    timeframe: str = "1Day",
+    days: int = 120,
+    persist: bool = True,
+) -> dict[str, Any]:
+    """Build a candle-chart data artifact for one symbol."""
+    async with httpx.AsyncClient(timeout=120) as client:
+        response = await client.post(
+            f"{_orchestrator_url()}/charts/candles",
+            json={"symbol": symbol, "timeframe": timeframe, "days": days, "persist": persist},
+        )
+        return _json_or_error(response)
+
+
+@mcp.tool
+async def chart_backtest(backtest_run_id: int | None = None) -> dict[str, Any]:
+    """Build an equity-curve artifact from persisted backtest trades."""
+    params = {}
+    if backtest_run_id is not None:
+        params["backtest_run_id"] = backtest_run_id
+    async with httpx.AsyncClient(timeout=60) as client:
+        response = await client.post(f"{_orchestrator_url()}/charts/equity-curve", params=params)
+        return _json_or_error(response)
+
+
+@mcp.tool
+async def get_symbol_report(
+    symbol: str,
+    timeframe: str = "1Day",
+    days: int = 120,
+    persist: bool = True,
+) -> dict[str, Any]:
+    """Return recent bars, features, decisions, and a chart artifact for one symbol."""
+    async with httpx.AsyncClient(timeout=120) as client:
+        response = await client.post(
+            f"{_orchestrator_url()}/reports/symbol",
+            json={"symbol": symbol, "timeframe": timeframe, "days": days, "persist": persist},
+        )
+        return _json_or_error(response)
+
+
+@mcp.tool
+async def get_portfolio_report() -> dict[str, Any]:
+    """Return account, positions, open orders, and a persisted report artifact."""
+    async with httpx.AsyncClient(timeout=60) as client:
+        response = await client.post(f"{_orchestrator_url()}/reports/portfolio")
+        return _json_or_error(response)
+
+
+@mcp.tool
 async def run_backtest_seed(
     symbols: list[str] | None = None,
     days: int = 120,
@@ -164,6 +331,7 @@ async def run_backtest_seed(
     initial_cash: float = 10000,
     strategy: str = "moving_average",
     persist: bool = True,
+    universe: str | None = None,
 ) -> dict[str, Any]:
     """Backtest historical bars and persist labeled rows for inference training."""
     async with httpx.AsyncClient(timeout=120) as client:
@@ -171,6 +339,7 @@ async def run_backtest_seed(
             f"{_orchestrator_url()}/backtests/run",
             json={
                 "symbols": symbols or [],
+                "universe": universe,
                 "days": days,
                 "horizon_days": horizon_days,
                 "label_threshold": label_threshold,
@@ -178,6 +347,35 @@ async def run_backtest_seed(
                 "auto_size": auto_size,
                 "initial_cash": initial_cash,
                 "strategy": strategy,
+                "persist": persist,
+            },
+        )
+        return _json_or_error(response)
+
+
+@mcp.tool
+async def run_backtest_sweep(
+    symbols: list[str] | None = None,
+    universe: str | None = None,
+    days: int = 120,
+    strategies: list[str] | None = None,
+    horizons: list[int] | None = None,
+    label_thresholds: list[float] | None = None,
+    initial_cash: float = 10000,
+    persist: bool = False,
+) -> dict[str, Any]:
+    """Run a small strategy/parameter sweep without submitting paper orders."""
+    async with httpx.AsyncClient(timeout=240) as client:
+        response = await client.post(
+            f"{_orchestrator_url()}/backtests/sweep",
+            json={
+                "symbols": symbols or [],
+                "universe": universe,
+                "days": days,
+                "strategies": strategies or ["trend_following", "breakout"],
+                "horizons": horizons or [1, 3, 5],
+                "label_thresholds": label_thresholds or [0.0, 0.0025, 0.005],
+                "initial_cash": initial_cash,
                 "persist": persist,
             },
         )

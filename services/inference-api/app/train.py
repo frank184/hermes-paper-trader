@@ -24,7 +24,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
-from app.main import FEATURE_ORDER
+from app.main import FEATURE_ORDER, FEATURE_VERSION
 
 RANDOM_STATE = 42
 
@@ -77,6 +77,8 @@ def main() -> None:
         "sell_threshold": tuned_thresholds["sell_threshold"],
         "metadata": {
             "created_at": datetime.now(UTC).isoformat(),
+            "feature_version": FEATURE_VERSION,
+            "label_strategy": "trade_outcomes.label",
             "row_count": len(rows),
             "label_counts": {str(label): int(count) for label, count in zip(*np.unique(y, return_counts=True))},
             "train_rows": int(len(split["y_train"])),

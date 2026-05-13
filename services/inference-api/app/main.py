@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 Action = Literal["buy", "sell", "hold"]
+FEATURE_VERSION = "features-v1"
 FEATURE_ORDER = [
     "returns_1",
     "returns_5",
@@ -15,6 +16,18 @@ FEATURE_ORDER = [
     "moving_average_distance_20",
     "volatility_20",
     "volume_zscore_20",
+    "daily_returns_20",
+    "daily_returns_60",
+    "daily_returns_120",
+    "sma_distance_20",
+    "sma_distance_50",
+    "sma_distance_200",
+    "trend_regime",
+    "drawdown_from_52w_high",
+    "distance_from_52w_low",
+    "position_qty",
+    "position_notional",
+    "unrealized_plpc",
 ]
 
 
@@ -78,8 +91,18 @@ def _model_prediction(request: PredictRequest, model_path: Path) -> PredictRespo
 def _heuristic_prediction(request: PredictRequest) -> PredictResponse:
     returns_5 = float(request.features.get("returns_5", 0.0))
     ma_distance = float(request.features.get("moving_average_distance_20", 0.0))
+    daily_returns_60 = float(request.features.get("daily_returns_60", 0.0))
+    trend_regime = float(request.features.get("trend_regime", 0.0))
+    drawdown = abs(float(request.features.get("drawdown_from_52w_high", 0.0)))
     volatility = abs(float(request.features.get("volatility_20", 0.0)))
-    score = (returns_5 * 3.0) + (ma_distance * 2.0) - min(volatility, 0.05)
+    score = (
+        (returns_5 * 2.0)
+        + (ma_distance * 1.5)
+        + (daily_returns_60 * 1.5)
+        + (trend_regime * 0.04)
+        - min(volatility, 0.05)
+        - min(drawdown, 0.2) * 0.15
+    )
     probability_up = max(0.05, min(0.95, 0.5 + score))
     return PredictResponse(
         symbol=request.symbol.upper(),
@@ -88,7 +111,12 @@ def _heuristic_prediction(request: PredictRequest) -> PredictResponse:
         confidence=max(probability_up, 1.0 - probability_up),
         model_name="heuristic-baseline",
         model_version=getenv("MODEL_VERSION", "baseline-heuristic-v0"),
-        raw_output={"probability_up": probability_up, "score": score, "source": "heuristic"},
+        raw_output={
+            "probability_up": probability_up,
+            "score": score,
+            "source": "heuristic",
+            "feature_version": request.features.get("feature_version", FEATURE_VERSION),
+        },
     )
 
 
