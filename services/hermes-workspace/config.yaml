@@ -394,27 +394,5 @@ mcp_servers:
     timeout: 120
     connect_timeout: 60
     tools:
-      include:
-        - run_trading_tick
-        - discover_trade_candidates
-        - scan_trade_candidates
-        - list_symbols
-        - add_symbol
-        - disable_symbol
-        - import_symbols
-        - propose_trade_decision
-        - get_portfolio_state
-        - get_open_positions
-        - get_orders
-        - get_order
-        - cancel_order
-        - get_market_clock
-        - get_market_bars
-        - chart_symbol
-        - chart_backtest
-        - get_symbol_report
-        - get_portfolio_report
-        - run_backtest_seed
-        - run_backtest_sweep
       resources: false
       prompts: false
