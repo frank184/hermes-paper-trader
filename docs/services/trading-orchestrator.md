@@ -64,7 +64,7 @@ POST /symbols/scan
 
 `/market/bars` fetches Alpaca historical bars and upserts them into `market_bars`. Scans, reports, charts, live decisions, and backtests also persist bars so research data accumulates naturally.
 
-Chart endpoints write JSON, self-contained HTML, and SVG image artifacts into `./artifacts` through the orchestrator container's `/artifacts` mount. The same host folder is mounted into Hermes Workspace at `artifacts/`, so `chart_symbol` and `chart_backtest` responses include `workspace_artifact_paths.html` for a browser-viewable chart and `workspace_artifact_paths.svg` for inline chat rendering.
+Chart endpoints write JSON, self-contained HTML, SVG, and PNG image artifacts into `./artifacts` through the orchestrator container's `/artifacts` mount. The same host folder is mounted into Hermes Workspace at `artifacts/`, so `chart_symbol` and `chart_backtest` responses include `workspace_artifact_paths.html` for a browser-viewable chart and `workspace_artifact_paths.png` for inline chat rendering.
 
 `/backtests/run` fetches historical daily bars, computes features at each historical point, looks forward by `horizon_days`, and writes labeled training rows plus `backtest_trades`. It is the preferred way to seed `trade_outcomes` before the paper agent has enough real fills.
 

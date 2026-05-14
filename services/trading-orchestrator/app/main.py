@@ -8,6 +8,7 @@ from random import random
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
+from PIL import Image, ImageDraw
 from psycopg.types.json import Jsonb
 
 from app.alpaca_client import AlpacaPaperClient
@@ -498,20 +499,28 @@ def chart_candles(request: ChartRequest) -> dict[str, Any]:
         request.symbol.upper(),
         _render_candles_svg(chart),
     )
+    png_artifact_path = _write_png_artifact(
+        "candles",
+        request.symbol.upper(),
+        _render_candles_png(chart),
+    )
     return {
         **chart,
         "artifact_path": artifact_path,
         "html_artifact_path": html_artifact_path,
         "svg_artifact_path": svg_artifact_path,
+        "png_artifact_path": png_artifact_path,
         "artifact_paths": {
             "json": artifact_path,
             "html": html_artifact_path,
             "svg": svg_artifact_path,
+            "png": png_artifact_path,
         },
         "workspace_artifact_paths": {
             "json": _workspace_artifact_path(artifact_path),
             "html": _workspace_artifact_path(html_artifact_path),
             "svg": _workspace_artifact_path(svg_artifact_path),
+            "png": _workspace_artifact_path(png_artifact_path),
         },
     }
 
@@ -555,20 +564,28 @@ def chart_equity_curve(backtest_run_id: int | None = None) -> dict[str, Any]:
         str(backtest_run_id or "latest"),
         _render_equity_curve_svg(chart),
     )
+    png_artifact_path = _write_png_artifact(
+        "equity-curve",
+        str(backtest_run_id or "latest"),
+        _render_equity_curve_png(chart),
+    )
     return {
         **chart,
         "artifact_path": artifact_path,
         "html_artifact_path": html_artifact_path,
         "svg_artifact_path": svg_artifact_path,
+        "png_artifact_path": png_artifact_path,
         "artifact_paths": {
             "json": artifact_path,
             "html": html_artifact_path,
             "svg": svg_artifact_path,
+            "png": png_artifact_path,
         },
         "workspace_artifact_paths": {
             "json": _workspace_artifact_path(artifact_path),
             "html": _workspace_artifact_path(html_artifact_path),
             "svg": _workspace_artifact_path(svg_artifact_path),
+            "png": _workspace_artifact_path(png_artifact_path),
         },
     }
 
@@ -602,6 +619,7 @@ def symbol_report(request: ChartRequest) -> dict[str, Any]:
         "chart_artifact_path": bars["artifact_path"],
         "chart_html_artifact_path": bars["html_artifact_path"],
         "chart_svg_artifact_path": bars["svg_artifact_path"],
+        "chart_png_artifact_path": bars["png_artifact_path"],
         "chart_workspace_artifact_paths": bars["workspace_artifact_paths"],
     }
     artifact_path = _write_artifact("symbol-report", request.symbol.upper(), report)
@@ -1405,6 +1423,16 @@ def _write_svg_artifact(kind: str, name: str, svg: str) -> str:
     return str(path)
 
 
+def _write_png_artifact(kind: str, name: str, image: Image.Image) -> str:
+    artifact_dir = Path(getenv("ARTIFACT_DIR", "/artifacts"))
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in name)
+    timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+    path = artifact_dir / f"{kind}-{safe_name}-{timestamp}.png"
+    image.save(path, format="PNG")
+    return str(path)
+
+
 def _workspace_artifact_path(artifact_path: str) -> str:
     artifact_dir = Path(getenv("ARTIFACT_DIR", "/artifacts")).resolve()
     try:
@@ -1513,6 +1541,77 @@ def _render_candles_svg(chart: dict[str, Any]) -> str:
     )
 
 
+def _render_candles_png(chart: dict[str, Any]) -> Image.Image:
+    bars = chart.get("bars") or []
+    symbol = str(chart.get("symbol") or "")
+    timeframe = str(chart.get("timeframe") or "")
+    if not bars:
+        return _empty_png(f"{symbol} Candles", "No bars available")
+
+    parsed = [_parse_bar_for_chart(bar) for bar in bars]
+    prices = [price for bar in parsed for price in (bar["open"], bar["high"], bar["low"], bar["close"])]
+    volumes = [bar["volume"] for bar in parsed]
+    min_price = min(prices)
+    max_price = max(prices)
+    price_padding = (max_price - min_price) * 0.08 or max(max_price * 0.01, 1.0)
+    min_price -= price_padding
+    max_price += price_padding
+
+    width = max(960, len(parsed) * 11)
+    height = 560
+    left = 72
+    right = 24
+    top = 48
+    price_bottom = 410
+    volume_top = 438
+    volume_bottom = 520
+    plot_width = width - left - right
+    candle_slot = plot_width / max(len(parsed), 1)
+    candle_width = max(3, min(10, candle_slot * 0.62))
+    max_volume = max(volumes) or 1.0
+    image, draw = _new_chart_canvas(width, height)
+
+    def y_price(value: float) -> float:
+        return price_bottom - ((value - min_price) / (max_price - min_price)) * (price_bottom - top)
+
+    def y_volume(value: float) -> float:
+        return volume_bottom - (value / max_volume) * (volume_bottom - volume_top)
+
+    draw.text((left, 18), f"{symbol} {timeframe} Candles", fill=_CHART_TEXT)
+    for idx in range(6):
+        y = top + idx * ((price_bottom - top) / 5)
+        price = max_price - idx * ((max_price - min_price) / 5)
+        draw.line((left, y, width - right, y), fill=_CHART_GRID, width=1)
+        draw.text((14, y - 7), f"${price:,.2f}", fill=_CHART_MUTED)
+
+    draw.line((left, price_bottom, width - right, price_bottom), fill=_CHART_GRID, width=1)
+    draw.line((left, volume_bottom, width - right, volume_bottom), fill=_CHART_GRID, width=1)
+
+    for index, bar in enumerate(parsed):
+        x = left + index * candle_slot + candle_slot / 2
+        color = _CHART_UP if bar["close"] >= bar["open"] else _CHART_DOWN
+        high_y = y_price(bar["high"])
+        low_y = y_price(bar["low"])
+        open_y = y_price(bar["open"])
+        close_y = y_price(bar["close"])
+        body_top = min(open_y, close_y)
+        body_height = max(abs(close_y - open_y), 1.5)
+        vol_y = y_volume(bar["volume"])
+        x1 = x - candle_width / 2
+        x2 = x + candle_width / 2
+
+        draw.line((x, high_y, x, low_y), fill=color, width=2)
+        draw.rectangle((x1, body_top, x2, body_top + body_height), fill=color, outline=color)
+        draw.rectangle((x1, vol_y, x2, volume_bottom), fill=_blend(color, _CHART_BG, 0.45))
+
+        if index in {0, len(parsed) // 2, len(parsed) - 1}:
+            label = bar["short_label"]
+            label_width = draw.textlength(label)
+            draw.text((x - label_width / 2, 540), label, fill=_CHART_MUTED)
+
+    return image
+
+
 def _render_equity_curve_html(chart: dict[str, Any]) -> str:
     points = chart.get("points") or []
     if not points:
@@ -1583,6 +1682,47 @@ def _render_equity_curve_svg(chart: dict[str, Any]) -> str:
     )
 
 
+def _render_equity_curve_png(chart: dict[str, Any]) -> Image.Image:
+    points = chart.get("points") or []
+    if not points:
+        return _empty_png("Equity Curve", "No backtest trades available")
+
+    values = [float(point.get("equity") or 0.0) for point in points]
+    min_value = min(values)
+    max_value = max(values)
+    padding = (max_value - min_value) * 0.12 or 1.0
+    min_value -= padding
+    max_value += padding
+    width = max(960, len(points) * 8)
+    height = 520
+    left = 72
+    right = 24
+    top = 48
+    bottom = 448
+    plot_width = width - left - right
+    image, draw = _new_chart_canvas(width, height)
+
+    def x_value(index: int) -> float:
+        return left + (index / max(len(points) - 1, 1)) * plot_width
+
+    def y_value(value: float) -> float:
+        return bottom - ((value - min_value) / (max_value - min_value)) * (bottom - top)
+
+    draw.text((left, 18), "Backtest Equity Curve", fill=_CHART_TEXT)
+    for idx in range(6):
+        y = top + idx * ((bottom - top) / 5)
+        value = max_value - idx * ((max_value - min_value) / 5)
+        draw.line((left, y, width - right, y), fill=_CHART_GRID, width=1)
+        draw.text((14, y - 7), f"${value:,.2f}", fill=_CHART_MUTED)
+
+    coords = [(x_value(index), y_value(value)) for index, value in enumerate(values)]
+    if len(coords) > 1:
+        draw.line(coords, fill=_CHART_LINE, width=3, joint="curve")
+    for x, y in coords:
+        draw.ellipse((x - 3, y - 3, x + 3, y + 3), fill=_CHART_LINE, outline=_CHART_BG)
+    return image
+
+
 def _parse_bar_for_chart(bar: dict[str, Any]) -> dict[str, Any]:
     timestamp = str(bar.get("timestamp") or bar.get("captured_at") or "")
     return {
@@ -1594,6 +1734,38 @@ def _parse_bar_for_chart(bar: dict[str, Any]) -> dict[str, Any]:
         "close": float(bar.get("close") or 0.0),
         "volume": float(bar.get("volume") or 0.0),
     }
+
+
+_CHART_BG = "#092821"
+_CHART_GRID = "#214740"
+_CHART_TEXT = "#e2fff4"
+_CHART_MUTED = "#8bd7c7"
+_CHART_UP = "#35d39d"
+_CHART_DOWN = "#ff5b6e"
+_CHART_LINE = "#8fd3ff"
+
+
+def _new_chart_canvas(width: int, height: int) -> tuple[Image.Image, ImageDraw.ImageDraw]:
+    image = Image.new("RGB", (width, height), _CHART_BG)
+    draw = ImageDraw.Draw(image)
+    return image, draw
+
+
+def _empty_png(title: str, message: str) -> Image.Image:
+    image, draw = _new_chart_canvas(960, 240)
+    draw.text((48, 48), title, fill=_CHART_TEXT)
+    draw.text((48, 100), message, fill=_CHART_MUTED)
+    return image
+
+
+def _blend(foreground: str, background: str, alpha: float) -> str:
+    fg = tuple(int(foreground[index : index + 2], 16) for index in (1, 3, 5))
+    bg = tuple(int(background[index : index + 2], 16) for index in (1, 3, 5))
+    rgb = tuple(
+        round(fg_part * alpha + bg_part * (1 - alpha))
+        for fg_part, bg_part in zip(fg, bg, strict=True)
+    )
+    return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
 
 
 def _empty_svg(title: str, message: str) -> str:

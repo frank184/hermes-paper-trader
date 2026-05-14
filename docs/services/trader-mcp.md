@@ -70,7 +70,7 @@ run_backtest_sweep
 
 `discover_trade_candidates` and `scan_trade_candidates` expose strategy-aware discovery without running decisions, which is useful when you want Hermes to inspect candidates first.
 
-`get_market_bars`, `chart_symbol`, `chart_backtest`, `get_symbol_report`, and `get_portfolio_report` fetch data through the orchestrator, persist useful market rows, and return structured chart/report artifacts. Chart tools also return `chat_markdown_image`; Hermes should include that value verbatim in the assistant response when you want the chart rendered inline in chat. Workspace rewrites the returned `MEDIA:/...` marker into a browser-safe image URL.
+`get_market_bars`, `chart_symbol`, `chart_backtest`, `get_symbol_report`, and `get_portfolio_report` fetch data through the orchestrator, persist useful market rows, and return structured chart/report artifacts. Chart tools also return `chat_markdown_image`; Hermes should include that value verbatim in the assistant response when you want the PNG chart rendered inline in chat. Workspace rewrites the returned `MEDIA:/...` marker into a browser-safe image URL.
 
 `get_open_positions` returns current Alpaca paper positions and persists a position snapshot.
 

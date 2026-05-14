@@ -419,6 +419,7 @@ def _compact_chart_response(payload: dict[str, Any]) -> dict[str, Any]:
     workspace_paths = payload.get("workspace_artifact_paths") or {}
     artifact_paths = payload.get("artifact_paths") or {}
     html_workspace_path = workspace_paths.get("html")
+    png_workspace_path = workspace_paths.get("png")
     svg_workspace_path = workspace_paths.get("svg")
 
     compact = {
@@ -432,14 +433,16 @@ def _compact_chart_response(payload: dict[str, Any]) -> dict[str, Any]:
         "artifact_paths": artifact_paths,
         "workspace_artifact_paths": workspace_paths,
         "html_artifact_path": payload.get("html_artifact_path"),
+        "png_artifact_path": payload.get("png_artifact_path"),
         "svg_artifact_path": payload.get("svg_artifact_path"),
         "json_artifact_path": payload.get("artifact_path"),
     }
-    if svg_workspace_path:
-        image_url = _workspace_media_url(svg_workspace_path)
+    image_workspace_path = png_workspace_path or svg_workspace_path
+    if image_workspace_path:
+        image_url = _workspace_media_url(image_workspace_path)
         compact["chat_image_url"] = image_url
         compact["chat_markdown_image"] = f"![{payload.get('symbol') or payload.get('type') or 'Trader chart'} chart]({image_url})"
-        compact["chat_render_hint"] = "Include chat_markdown_image verbatim in the assistant response to render the chart inline."
+        compact["chat_render_hint"] = "Include chat_markdown_image verbatim in the assistant response to render the PNG chart inline."
     if html_workspace_path:
         compact["open_hint"] = f"Open {html_workspace_path} in the Workspace Files panel to view the chart."
     return {key: value for key, value in compact.items() if value not in (None, {}, [])}
