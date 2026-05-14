@@ -1,3 +1,0 @@
-hermes
-exit
-exit
