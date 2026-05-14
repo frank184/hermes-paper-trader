@@ -66,6 +66,8 @@ Use hermes_trader get_market_bars for symbols=["AAPL", "MSFT", "NVDA"], timefram
 Use hermes_trader chart_symbol for symbol=GOOGL, timeframe=1Day, days=180, persist=true. Include the returned chat_markdown_image verbatim so the chart renders inline, then summarize the chart.
 ```
 
+`chat_markdown_image` may contain a `MEDIA:/...` path. Keep it exactly as returned; Hermes Workspace rewrites that marker into a same-origin image URL for chat rendering.
+
 ```text
 Use hermes_trader get_symbol_report for symbol=GOOGL, timeframe=1Day, days=180, persist=true. Focus on whether long, short, or hold is better supported by the data.
 ```

@@ -1,6 +1,5 @@
 from os import getenv
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 from fastmcp import FastMCP
@@ -437,13 +436,20 @@ def _compact_chart_response(payload: dict[str, Any]) -> dict[str, Any]:
         "json_artifact_path": payload.get("artifact_path"),
     }
     if svg_workspace_path:
-        image_url = f"/api/files?action=download&path={quote(svg_workspace_path, safe='')}"
+        image_url = _workspace_media_url(svg_workspace_path)
         compact["chat_image_url"] = image_url
         compact["chat_markdown_image"] = f"![{payload.get('symbol') or payload.get('type') or 'Trader chart'} chart]({image_url})"
         compact["chat_render_hint"] = "Include chat_markdown_image verbatim in the assistant response to render the chart inline."
     if html_workspace_path:
         compact["open_hint"] = f"Open {html_workspace_path} in the Workspace Files panel to view the chart."
     return {key: value for key, value in compact.items() if value not in (None, {}, [])}
+
+
+def _workspace_media_url(workspace_path: str) -> str:
+    if workspace_path.startswith("/"):
+        return f"MEDIA:{workspace_path}"
+    workspace_root = getenv("HERMES_WORKSPACE_DIR", "/opt/data/workspace").rstrip("/")
+    return f"MEDIA:{workspace_root}/{workspace_path.lstrip('/')}"
 
 
 if __name__ == "__main__":
