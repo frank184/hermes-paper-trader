@@ -265,8 +265,13 @@ async def get_market_bars(
     days: int = 120,
     limit: int | None = None,
     persist: bool = True,
+    force_refresh: bool = False,
 ) -> dict[str, Any]:
-    """Fetch Alpaca market bars through the orchestrator and persist them for research."""
+    """Get market bars through the orchestrator.
+
+    The orchestrator reuses fresh persisted bars when possible. Set force_refresh=True
+    to pull from Alpaca even when local rows are available.
+    """
     async with httpx.AsyncClient(timeout=120) as client:
         response = await client.post(
             f"{_orchestrator_url()}/market/bars",
@@ -276,6 +281,7 @@ async def get_market_bars(
                 "days": days,
                 "limit": limit,
                 "persist": persist,
+                "force_refresh": force_refresh,
             },
         )
         return _json_or_error(response)
@@ -352,9 +358,14 @@ async def run_backtest_seed(
     initial_cash: float = 10000,
     strategy: str = "moving_average",
     persist: bool = True,
+    force_refresh: bool = False,
     universe: str | None = None,
 ) -> dict[str, Any]:
-    """Backtest historical bars and persist labeled rows for inference training."""
+    """Backtest historical bars and persist labeled rows for inference training.
+
+    Backtests reuse fresh persisted daily bars by default. Set force_refresh=True
+    when you intentionally want to pull Alpaca again before the run.
+    """
     async with httpx.AsyncClient(timeout=120) as client:
         response = await client.post(
             f"{_orchestrator_url()}/backtests/run",
@@ -369,6 +380,7 @@ async def run_backtest_seed(
                 "initial_cash": initial_cash,
                 "strategy": strategy,
                 "persist": persist,
+                "force_refresh": force_refresh,
             },
         )
         return _json_or_error(response)
@@ -384,6 +396,7 @@ async def run_backtest_sweep(
     label_thresholds: list[float] | None = None,
     initial_cash: float = 10000,
     persist: bool = False,
+    force_refresh: bool = False,
 ) -> dict[str, Any]:
     """Run a small strategy/parameter sweep without submitting paper orders."""
     async with httpx.AsyncClient(timeout=240) as client:
@@ -398,6 +411,7 @@ async def run_backtest_sweep(
                 "label_thresholds": label_thresholds or [0.0, 0.0025, 0.005],
                 "initial_cash": initial_cash,
                 "persist": persist,
+                "force_refresh": force_refresh,
             },
         )
         return _json_or_error(response)

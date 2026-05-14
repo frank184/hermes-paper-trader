@@ -62,6 +62,8 @@ Use hermes_trader discover_trade_candidates with strategy=random_baseline, max_s
 Use hermes_trader get_market_bars for symbols=["AAPL", "MSFT", "NVDA"], timeframe=1Day, days=120, persist=true. Summarize trend and volatility.
 ```
 
+Use `force_refresh=true` only when you intentionally want to bypass fresh persisted bars and pull from Alpaca again.
+
 ```text
 Use hermes_trader chart_symbol for symbol=GOOGL, timeframe=1Day, days=180, persist=true.
 ```
@@ -81,6 +83,8 @@ Use hermes_trader get_portfolio_report and summarize portfolio exposure, open or
 ```text
 Use hermes_trader run_backtest_seed with universe=core, days=180, horizon_days=5, label_threshold=0.0025, strategy=trend_following, persist=true. Summarize final value, win rate, drawdown, and per-symbol behavior.
 ```
+
+Backtests reuse fresh persisted bars by default. Add `force_refresh=true` only when you want the run to refresh historical bars from Alpaca first.
 
 ```text
 Use hermes_trader run_backtest_sweep with universe=core, days=180, strategies=["trend_following", "breakout", "mean_reversion_watch"], horizons=[1,3,5,10], label_thresholds=[0.0,0.0025,0.005], persist=false. Rank the best parameter sets.

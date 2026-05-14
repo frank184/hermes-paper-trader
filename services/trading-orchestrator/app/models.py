@@ -64,6 +64,7 @@ class BacktestRequest(BaseModel):
     initial_cash: float = Field(default=10000, gt=0)
     strategy: Literal["inference", "moving_average", "trend_following", "breakout"] = "trend_following"
     persist: bool = True
+    force_refresh: bool = False
 
 
 class BacktestSweepRequest(BaseModel):
@@ -75,6 +76,7 @@ class BacktestSweepRequest(BaseModel):
     label_thresholds: list[float] = Field(default_factory=lambda: [0.0, 0.0025, 0.005])
     initial_cash: float = Field(default=10000, gt=0)
     persist: bool = False
+    force_refresh: bool = False
 
 
 class SymbolRequest(BaseModel):
@@ -107,6 +109,7 @@ class MarketBarsRequest(BaseModel):
     days: int = Field(default=120, ge=1, le=1000)
     limit: int | None = Field(default=None, ge=1, le=10000)
     persist: bool = True
+    force_refresh: bool = False
 
 
 class ChartRequest(BaseModel):

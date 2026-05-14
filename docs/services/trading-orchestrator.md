@@ -62,7 +62,7 @@ POST /symbols/scan
 
 `/symbols` is the runtime control surface for tradable symbols. `SYMBOL_ALLOWLIST_SEED` only seeds the DB; enabled rows in Postgres decide what Trader may scan or trade.
 
-`/market/bars` fetches Alpaca historical bars and upserts them into `market_bars`. Scans, reports, charts, live decisions, and backtests also persist bars so research data accumulates naturally.
+`/market/bars` reuses fresh persisted bars when possible and fetches from Alpaca when rows are missing, stale, or `force_refresh=true`. Responses include per-symbol `data_access` metadata showing whether rows came from Postgres, Alpaca, or a mixed path. Charts and backtests use the same path, so historical views and training-data generation can explain whether they reused local rows or refreshed from Alpaca.
 
 Chart endpoints write JSON, self-contained HTML, SVG, and PNG image artifacts into `./artifacts` through the orchestrator container's `/artifacts` mount. The same host folder is mounted into Hermes Workspace at `artifacts/`, so `chart_symbol` and `chart_backtest` responses include `workspace_artifact_paths.html` for a browser-viewable chart and `workspace_artifact_paths.png` for inline chat rendering.
 

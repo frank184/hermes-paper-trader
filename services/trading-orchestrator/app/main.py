@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from html import escape
 import json
@@ -288,19 +288,70 @@ def import_symbols(request: SymbolImportRequest) -> dict[str, Any]:
 def market_bars(request: MarketBarsRequest) -> dict[str, Any]:
     settings = get_settings()
     client = AlpacaPaperClient(settings)
-    result = {"timeframe": request.timeframe, "persist": request.persist, "symbols": {}, "rows": 0}
+    result = {
+        "timeframe": request.timeframe,
+        "persist": request.persist,
+        "force_refresh": request.force_refresh,
+        "symbols": {},
+        "rows": 0,
+        "data_access": {
+            "source_counts": {"persisted": 0, "fetched": 0, "mixed": 0},
+        },
+    }
     for symbol in _normalize_symbols(request.symbols):
-        bars = client.historical_bars(
-            symbol,
-            timeframe=request.timeframe,
-            days=request.days,
-            limit=request.limit,
+        with connect() as conn:
+            persisted_bars, persisted_meta = _read_persisted_market_bars(
+                conn,
+                symbol,
+                request.timeframe,
+                request.days,
+                request.limit,
+            )
+
+        should_fetch = request.force_refresh or not _persisted_bars_are_usable(
+            persisted_bars,
+            persisted_meta,
+            request.timeframe,
+            request.days,
+            request.limit,
         )
-        if request.persist:
-            with connect() as conn:
-                _persist_market_bars(conn, bars)
-        result["symbols"][symbol] = {"count": len(bars), "bars": bars}
+
+        fetched_rows = 0
+        if should_fetch:
+            bars = client.historical_bars(
+                symbol,
+                timeframe=request.timeframe,
+                days=request.days,
+                limit=request.limit,
+            )
+            fetched_rows = len(bars)
+            if request.persist:
+                with connect() as conn:
+                    _persist_market_bars(conn, bars)
+                persisted_meta = {
+                    "start_at": persisted_meta.get("start_at"),
+                    "latest_ingested_at": datetime.now(UTC),
+                    "latest_bar_at": _latest_bar_timestamp(bars),
+                }
+            source = "mixed" if persisted_bars and not request.force_refresh else "fetched"
+        else:
+            bars = persisted_bars
+            source = "persisted"
+
+        result["symbols"][symbol] = {
+            "count": len(bars),
+            "bars": bars,
+            "data_access": _market_data_access_metadata(
+                source=source,
+                request=request,
+                persisted_rows=len(persisted_bars),
+                fetched_rows=fetched_rows,
+                returned_rows=len(bars),
+                persisted_meta=persisted_meta,
+            ),
+        }
         result["rows"] += len(bars)
+        result["data_access"]["source_counts"][source] += 1
     return result
 
 
@@ -360,7 +411,6 @@ async def run_backtest(request: BacktestRequest) -> dict[str, Any]:
     settings = get_settings()
     with connect() as conn:
         symbols = _normalize_symbols(request.symbols) or enabled_symbols(conn, settings, request.universe)
-    client = AlpacaPaperClient(settings)
     summary = {
         "strategy": request.strategy,
         "symbols": symbols,
@@ -368,9 +418,13 @@ async def run_backtest(request: BacktestRequest) -> dict[str, Any]:
         "horizon_days": request.horizon_days,
         "label_threshold": request.label_threshold,
         "persist": request.persist,
+        "force_refresh": request.force_refresh,
         "rows_created": 0,
         "symbols_processed": [],
         "rejected": [],
+        "data_access": {
+            "source_counts": {"persisted": 0, "fetched": 0, "mixed": 0},
+        },
     }
     total_pnl = 0.0
     total_trade_count = 0
@@ -397,17 +451,34 @@ async def run_backtest(request: BacktestRequest) -> dict[str, Any]:
             ).fetchone()["id"]
 
     for symbol in symbols:
-        bars = client.historical_daily_bars(symbol, request.days)
-        if request.persist:
-            with connect() as conn:
-                _persist_market_bars(conn, bars)
+        bars_response = market_bars(
+            MarketBarsRequest(
+                symbols=[symbol],
+                timeframe="1Day",
+                days=request.days,
+                persist=request.persist,
+                force_refresh=request.force_refresh,
+            )
+        )
+        symbol_bar_payload = bars_response["symbols"].get(symbol.upper(), {})
+        bars = symbol_bar_payload.get("bars", [])
+        data_access = symbol_bar_payload.get("data_access", {})
+        source = data_access.get("source")
+        if source in summary["data_access"]["source_counts"]:
+            summary["data_access"]["source_counts"][source] += 1
         if len(bars) < 25 + request.horizon_days:
             summary["rejected"].append(
-                {"symbol": symbol, "reason": "not enough historical bars", "bars": len(bars)}
+                {
+                    "symbol": symbol,
+                    "reason": "not enough historical bars",
+                    "bars": len(bars),
+                    "data_access": data_access,
+                }
             )
             continue
 
         symbol_result = await _backtest_symbol(settings, request, symbol, bars, run_id)
+        symbol_result["data_access"] = data_access
         summary["rows_created"] += symbol_result["rows_created"]
         total_pnl += float(symbol_result["pnl"])
         total_trade_count += int(symbol_result["trade_count"])
@@ -463,11 +534,17 @@ async def run_backtest_sweep(request: BacktestSweepRequest) -> dict[str, Any]:
                             initial_cash=request.initial_cash,
                             strategy=strategy if strategy in {"inference", "moving_average", "trend_following", "breakout"} else "trend_following",
                             persist=request.persist,
+                            force_refresh=request.force_refresh,
                         )
                     )
                 )
     runs.sort(key=lambda item: float(item.get("return_pct", 0.0)), reverse=True)
-    return {"count": len(runs), "runs": runs}
+    return {
+        "count": len(runs),
+        "force_refresh": request.force_refresh,
+        "data_access": _merge_data_access_counts(runs),
+        "runs": runs,
+    }
 
 
 @app.post("/charts/candles")
@@ -1291,6 +1368,162 @@ def _normalize_symbols(symbols: list[str]) -> list[str]:
     return normalized
 
 
+def _read_persisted_market_bars(
+    conn: Any,
+    symbol: str,
+    timeframe: str,
+    days: int,
+    limit: int | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    ensure_runtime_schema(conn)
+    start_at = datetime.now(UTC) - timedelta(days=days)
+    rows = conn.execute(
+        """
+        select symbol, timeframe, timestamp, open, high, low, close, volume, raw, created_at
+        from market_bars
+        where symbol = %s
+          and timeframe = %s
+          and timestamp >= %s
+        order by timestamp desc
+        limit %s
+        """,
+        (symbol.upper(), timeframe, start_at, limit or 10000),
+    ).fetchall()
+    rows = list(reversed(rows))
+    bars = [
+        {
+            "symbol": row["symbol"],
+            "timestamp": _iso_timestamp(row["timestamp"]),
+            "timeframe": row["timeframe"],
+            "open": _safe_float(row["open"]),
+            "high": _safe_float(row["high"]),
+            "low": _safe_float(row["low"]),
+            "close": _safe_float(row["close"]),
+            "volume": _safe_float(row["volume"]),
+            "raw": row["raw"] or {},
+        }
+        for row in rows
+    ]
+    latest_ingested_at = max((row["created_at"] for row in rows if row.get("created_at")), default=None)
+    latest_bar_at = max((row["timestamp"] for row in rows if row.get("timestamp")), default=None)
+    return bars, {
+        "start_at": start_at,
+        "latest_ingested_at": latest_ingested_at,
+        "latest_bar_at": latest_bar_at,
+    }
+
+
+def _persisted_bars_are_usable(
+    bars: list[dict[str, Any]],
+    meta: dict[str, Any],
+    timeframe: str,
+    days: int,
+    limit: int | None,
+) -> bool:
+    if not bars:
+        return False
+    if len(bars) < _minimum_expected_bar_count(timeframe, days, limit):
+        return False
+    latest_ingested_at = meta.get("latest_ingested_at")
+    if not latest_ingested_at:
+        return False
+    age_seconds = (datetime.now(UTC) - _as_aware_utc(latest_ingested_at)).total_seconds()
+    return age_seconds <= _freshness_max_age_seconds(timeframe)
+
+
+def _market_data_access_metadata(
+    *,
+    source: str,
+    request: MarketBarsRequest,
+    persisted_rows: int,
+    fetched_rows: int,
+    returned_rows: int,
+    persisted_meta: dict[str, Any],
+) -> dict[str, Any]:
+    latest_ingested_at = persisted_meta.get("latest_ingested_at")
+    age_seconds = (
+        (datetime.now(UTC) - _as_aware_utc(latest_ingested_at)).total_seconds()
+        if latest_ingested_at
+        else None
+    )
+    return {
+        "source": source,
+        "force_refresh": request.force_refresh,
+        "persist_requested": request.persist,
+        "persisted_rows_available": persisted_rows,
+        "fetched_rows": fetched_rows,
+        "returned_rows": returned_rows,
+        "minimum_expected_rows": _minimum_expected_bar_count(
+            request.timeframe,
+            request.days,
+            request.limit,
+        ),
+        "freshness": {
+            "latest_ingested_at": _iso_timestamp(latest_ingested_at),
+            "latest_bar_at": _iso_timestamp(persisted_meta.get("latest_bar_at")),
+            "age_seconds": age_seconds,
+            "max_age_seconds": _freshness_max_age_seconds(request.timeframe),
+            "fresh": age_seconds is not None and age_seconds <= _freshness_max_age_seconds(request.timeframe),
+        },
+    }
+
+
+def _merge_data_access_counts(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    counts = {"persisted": 0, "fetched": 0, "mixed": 0}
+    for run in runs:
+        source_counts = run.get("data_access", {}).get("source_counts", {})
+        for source in counts:
+            counts[source] += int(source_counts.get(source, 0))
+    return {"source_counts": counts}
+
+
+def _minimum_expected_bar_count(timeframe: str, days: int, limit: int | None) -> int:
+    if _is_daily_timeframe(timeframe):
+        expected = max(1, int(days * 0.55))
+        return min(limit, expected) if limit else expected
+    if limit:
+        return min(limit, max(1, min(days, 30)))
+    return max(1, min(days, 30))
+
+
+def _freshness_max_age_seconds(timeframe: str) -> int:
+    if _is_daily_timeframe(timeframe):
+        return 18 * 60 * 60
+    return 5 * 60
+
+
+def _is_daily_timeframe(timeframe: str) -> bool:
+    return timeframe.lower() in {"1day", "day", "1d"}
+
+
+def _iso_timestamp(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return _as_aware_utc(value).isoformat()
+    return str(value)
+
+
+def _latest_bar_timestamp(bars: list[dict[str, Any]]) -> datetime | str | None:
+    timestamps = [bar.get("timestamp") for bar in bars if bar.get("timestamp")]
+    return max(timestamps) if timestamps else None
+
+
+def _as_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _safe_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _parse_symbol_filter(symbols: str | None) -> list[str] | None:
     if not symbols:
         return None
@@ -1361,7 +1594,8 @@ def _persist_market_bars(conn: Any, bars: list[dict[str, Any]]) -> None:
               low = excluded.low,
               close = excluded.close,
               volume = excluded.volume,
-              raw = excluded.raw
+              raw = excluded.raw,
+              created_at = now()
             """,
             (
                 str(bar["symbol"]).upper(),
