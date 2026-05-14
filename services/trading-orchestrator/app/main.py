@@ -1411,7 +1411,7 @@ def _workspace_artifact_path(artifact_path: str) -> str:
         relative = Path(artifact_path).resolve().relative_to(artifact_dir)
     except ValueError:
         return artifact_path
-    return f"workspace/artifacts/{relative.as_posix()}"
+    return f"artifacts/{relative.as_posix()}"
 
 
 def _render_candles_html(chart: dict[str, Any]) -> str:
