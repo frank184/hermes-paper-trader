@@ -493,17 +493,25 @@ def chart_candles(request: ChartRequest) -> dict[str, Any]:
         request.symbol.upper(),
         _render_candles_html(chart),
     )
+    svg_artifact_path = _write_svg_artifact(
+        "candles",
+        request.symbol.upper(),
+        _render_candles_svg(chart),
+    )
     return {
         **chart,
         "artifact_path": artifact_path,
         "html_artifact_path": html_artifact_path,
+        "svg_artifact_path": svg_artifact_path,
         "artifact_paths": {
             "json": artifact_path,
             "html": html_artifact_path,
+            "svg": svg_artifact_path,
         },
         "workspace_artifact_paths": {
             "json": _workspace_artifact_path(artifact_path),
             "html": _workspace_artifact_path(html_artifact_path),
+            "svg": _workspace_artifact_path(svg_artifact_path),
         },
     }
 
@@ -542,17 +550,25 @@ def chart_equity_curve(backtest_run_id: int | None = None) -> dict[str, Any]:
         str(backtest_run_id or "latest"),
         _render_equity_curve_html(chart),
     )
+    svg_artifact_path = _write_svg_artifact(
+        "equity-curve",
+        str(backtest_run_id or "latest"),
+        _render_equity_curve_svg(chart),
+    )
     return {
         **chart,
         "artifact_path": artifact_path,
         "html_artifact_path": html_artifact_path,
+        "svg_artifact_path": svg_artifact_path,
         "artifact_paths": {
             "json": artifact_path,
             "html": html_artifact_path,
+            "svg": svg_artifact_path,
         },
         "workspace_artifact_paths": {
             "json": _workspace_artifact_path(artifact_path),
             "html": _workspace_artifact_path(html_artifact_path),
+            "svg": _workspace_artifact_path(svg_artifact_path),
         },
     }
 
@@ -585,6 +601,7 @@ def symbol_report(request: ChartRequest) -> dict[str, Any]:
         "recent_decisions": [dict(row) for row in decisions],
         "chart_artifact_path": bars["artifact_path"],
         "chart_html_artifact_path": bars["html_artifact_path"],
+        "chart_svg_artifact_path": bars["svg_artifact_path"],
         "chart_workspace_artifact_paths": bars["workspace_artifact_paths"],
     }
     artifact_path = _write_artifact("symbol-report", request.symbol.upper(), report)
@@ -1378,6 +1395,16 @@ def _write_html_artifact(kind: str, name: str, html: str) -> str:
     return str(path)
 
 
+def _write_svg_artifact(kind: str, name: str, svg: str) -> str:
+    artifact_dir = Path(getenv("ARTIFACT_DIR", "/artifacts"))
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in name)
+    timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+    path = artifact_dir / f"{kind}-{safe_name}-{timestamp}.svg"
+    path.write_text(svg, encoding="utf-8")
+    return str(path)
+
+
 def _workspace_artifact_path(artifact_path: str) -> str:
     artifact_dir = Path(getenv("ARTIFACT_DIR", "/artifacts")).resolve()
     try:
@@ -1390,10 +1417,28 @@ def _workspace_artifact_path(artifact_path: str) -> str:
 def _render_candles_html(chart: dict[str, Any]) -> str:
     bars = chart.get("bars") or []
     symbol = str(chart.get("symbol") or "")
-    timeframe = str(chart.get("timeframe") or "")
-    summary = chart.get("summary") or {}
     if not bars:
         return _html_page(f"{symbol} Candles", "<p>No bars available for this chart.</p>")
+
+    summary = chart.get("summary") or {}
+    return_pct = float(summary.get("return_pct") or 0.0)
+    stats = (
+        f'<div class="stats">'
+        f'<span>Bars <strong>{int(summary.get("count") or 0)}</strong></span>'
+        f'<span>First close <strong>${float(summary.get("first_close") or 0):,.2f}</strong></span>'
+        f'<span>Last close <strong>${float(summary.get("last_close") or 0):,.2f}</strong></span>'
+        f'<span>Return <strong class="{ "pos" if return_pct >= 0 else "neg" }">{return_pct * 100:.2f}%</strong></span>'
+        f"</div>"
+    )
+    return _html_page(f"{symbol} Candle Chart", stats + _render_candles_svg(chart))
+
+
+def _render_candles_svg(chart: dict[str, Any]) -> str:
+    bars = chart.get("bars") or []
+    symbol = str(chart.get("symbol") or "")
+    timeframe = str(chart.get("timeframe") or "")
+    if not bars:
+        return _empty_svg(f"{symbol} Candles", "No bars available")
 
     parsed = [_parse_bar_for_chart(bar) for bar in bars]
     prices = [price for bar in parsed for price in (bar["open"], bar["high"], bar["low"], bar["close"])]
@@ -1454,17 +1499,10 @@ def _render_candles_html(chart: dict[str, Any]) -> str:
         if index in {0, len(parsed) // 2, len(parsed) - 1}:
             date_labels.append(f'<text x="{x:.2f}" y="546" class="axis middle">{escape(bar["short_label"])}</text>')
 
-    return_pct = float(summary.get("return_pct") or 0.0)
-    stats = (
-        f'<div class="stats">'
-        f'<span>Bars <strong>{int(summary.get("count") or 0)}</strong></span>'
-        f'<span>First close <strong>${float(summary.get("first_close") or 0):,.2f}</strong></span>'
-        f'<span>Last close <strong>${float(summary.get("last_close") or 0):,.2f}</strong></span>'
-        f'<span>Return <strong class="{ "pos" if return_pct >= 0 else "neg" }">{return_pct * 100:.2f}%</strong></span>'
-        f"</div>"
-    )
-    svg = (
-        f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="{escape(symbol)} candle chart">'
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" role="img" aria-label="{escape(symbol)} candle chart">'
+        f"{_svg_style()}"
+        f'<rect width="{width}" height="{height}" rx="8" class="bg" />'
         f'<text x="{left}" y="28" class="title">{escape(symbol)} {escape(timeframe)} Candles</text>'
         f'{"".join(grid)}'
         f'<line x1="{left}" y1="{price_bottom}" x2="{width - right}" y2="{price_bottom}" class="axis-line" />'
@@ -1473,13 +1511,30 @@ def _render_candles_html(chart: dict[str, Any]) -> str:
         f'{"".join(date_labels)}'
         f"</svg>"
     )
-    return _html_page(f"{symbol} Candle Chart", stats + svg)
 
 
 def _render_equity_curve_html(chart: dict[str, Any]) -> str:
     points = chart.get("points") or []
     if not points:
         return _html_page("Equity Curve", "<p>No backtest trades available for this chart.</p>")
+
+    values = [float(point.get("equity") or 0.0) for point in points]
+    final = values[-1]
+    stats = (
+        f'<div class="stats">'
+        f'<span>Trades <strong>{len(points)}</strong></span>'
+        f'<span>Final P/L <strong class="{ "pos" if final >= 0 else "neg" }">${final:,.2f}</strong></span>'
+        f'<span>Low <strong>${min(values):,.2f}</strong></span>'
+        f'<span>High <strong>${max(values):,.2f}</strong></span>'
+        f"</div>"
+    )
+    return _html_page("Backtest Equity Curve", stats + _render_equity_curve_svg(chart))
+
+
+def _render_equity_curve_svg(chart: dict[str, Any]) -> str:
+    points = chart.get("points") or []
+    if not points:
+        return _empty_svg("Equity Curve", "No backtest trades available")
 
     values = [float(point.get("equity") or 0.0) for point in points]
     min_value = min(values)
@@ -1516,24 +1571,16 @@ def _render_equity_curve_html(chart: dict[str, Any]) -> str:
         f"</circle>"
         for index, value in enumerate(values)
     ]
-    final = values[-1]
-    stats = (
-        f'<div class="stats">'
-        f'<span>Trades <strong>{len(points)}</strong></span>'
-        f'<span>Final P/L <strong class="{ "pos" if final >= 0 else "neg" }">${final:,.2f}</strong></span>'
-        f'<span>Low <strong>${min(values):,.2f}</strong></span>'
-        f'<span>High <strong>${max(values):,.2f}</strong></span>'
-        f"</div>"
-    )
-    svg = (
-        f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="Backtest equity curve">'
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" role="img" aria-label="Backtest equity curve">'
+        f"{_svg_style()}"
+        f'<rect width="{width}" height="{height}" rx="8" class="bg" />'
         f'<text x="{left}" y="28" class="title">Backtest Equity Curve</text>'
         f'{"".join(grid)}'
         f'<polyline points="{" ".join(path_points)}" class="line" />'
         f'{"".join(markers)}'
         f"</svg>"
     )
-    return _html_page("Backtest Equity Curve", stats + svg)
 
 
 def _parse_bar_for_chart(bar: dict[str, Any]) -> dict[str, Any]:
@@ -1547,6 +1594,36 @@ def _parse_bar_for_chart(bar: dict[str, Any]) -> dict[str, Any]:
         "close": float(bar.get("close") or 0.0),
         "volume": float(bar.get("volume") or 0.0),
     }
+
+
+def _empty_svg(title: str, message: str) -> str:
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 240" role="img">'
+        f"{_svg_style()}"
+        '<rect width="960" height="240" rx="8" class="bg" />'
+        f'<text x="48" y="72" class="title">{escape(title)}</text>'
+        f'<text x="48" y="122" class="axis">{escape(message)}</text>'
+        "</svg>"
+    )
+
+
+def _svg_style() -> str:
+    return """
+<style>
+  .bg { fill: #092821; }
+  .title { fill: #e2fff4; font: 700 20px Inter, system-ui, sans-serif; }
+  .axis { fill: #8bd7c7; font: 12px Inter, system-ui, sans-serif; }
+  .middle { text-anchor: middle; }
+  .axis-line, .grid { stroke: #214740; stroke-width: 1; }
+  .grid { opacity: 0.72; }
+  .wick.up, .candle.up { stroke: #35d39d; fill: #35d39d; }
+  .wick.down, .candle.down { stroke: #ff5b6e; fill: #ff5b6e; }
+  .wick { stroke-width: 1.5; }
+  .volume { opacity: 0.32; }
+  .line { fill: none; stroke: #8fd3ff; stroke-width: 2.5; }
+  .marker { fill: #8fd3ff; stroke: #061b18; stroke-width: 1; }
+</style>
+"""
 
 
 def _html_page(title: str, body: str) -> str:

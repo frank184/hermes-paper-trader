@@ -1,5 +1,6 @@
 from os import getenv
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from fastmcp import FastMCP
@@ -419,6 +420,7 @@ def _compact_chart_response(payload: dict[str, Any]) -> dict[str, Any]:
     workspace_paths = payload.get("workspace_artifact_paths") or {}
     artifact_paths = payload.get("artifact_paths") or {}
     html_workspace_path = workspace_paths.get("html")
+    svg_workspace_path = workspace_paths.get("svg")
 
     compact = {
         "type": payload.get("type"),
@@ -431,8 +433,14 @@ def _compact_chart_response(payload: dict[str, Any]) -> dict[str, Any]:
         "artifact_paths": artifact_paths,
         "workspace_artifact_paths": workspace_paths,
         "html_artifact_path": payload.get("html_artifact_path"),
+        "svg_artifact_path": payload.get("svg_artifact_path"),
         "json_artifact_path": payload.get("artifact_path"),
     }
+    if svg_workspace_path:
+        image_url = f"/api/files?action=download&path={quote(svg_workspace_path, safe='')}"
+        compact["chat_image_url"] = image_url
+        compact["chat_markdown_image"] = f"![{payload.get('symbol') or payload.get('type') or 'Trader chart'} chart]({image_url})"
+        compact["chat_render_hint"] = "Include chat_markdown_image verbatim in the assistant response to render the chart inline."
     if html_workspace_path:
         compact["open_hint"] = f"Open {html_workspace_path} in the Workspace Files panel to view the chart."
     return {key: value for key, value in compact.items() if value not in (None, {}, [])}
