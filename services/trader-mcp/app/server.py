@@ -288,24 +288,24 @@ async def chart_symbol(
     days: int = 120,
     persist: bool = True,
 ) -> dict[str, Any]:
-    """Build a candle-chart data artifact for one symbol."""
+    """Build a browser-viewable candle-chart artifact for one symbol."""
     async with httpx.AsyncClient(timeout=120) as client:
         response = await client.post(
             f"{_orchestrator_url()}/charts/candles",
             json={"symbol": symbol, "timeframe": timeframe, "days": days, "persist": persist},
         )
-        return _json_or_error(response)
+        return _compact_chart_response(_json_or_error(response))
 
 
 @mcp.tool
 async def chart_backtest(backtest_run_id: int | None = None) -> dict[str, Any]:
-    """Build an equity-curve artifact from persisted backtest trades."""
+    """Build a browser-viewable equity-curve artifact from persisted backtest trades."""
     params = {}
     if backtest_run_id is not None:
         params["backtest_run_id"] = backtest_run_id
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(f"{_orchestrator_url()}/charts/equity-curve", params=params)
-        return _json_or_error(response)
+        return _compact_chart_response(_json_or_error(response))
 
 
 @mcp.tool
@@ -410,6 +410,32 @@ def _json_or_error(response: httpx.Response) -> dict[str, Any]:
             "body": body,
         }
     return body
+
+
+def _compact_chart_response(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("error"):
+        return payload
+
+    workspace_paths = payload.get("workspace_artifact_paths") or {}
+    artifact_paths = payload.get("artifact_paths") or {}
+    html_workspace_path = workspace_paths.get("html")
+
+    compact = {
+        "type": payload.get("type"),
+        "symbol": payload.get("symbol"),
+        "timeframe": payload.get("timeframe"),
+        "backtest_run_id": payload.get("backtest_run_id"),
+        "summary": payload.get("summary"),
+        "point_count": len(payload.get("points") or []),
+        "bar_count": len(payload.get("bars") or []),
+        "artifact_paths": artifact_paths,
+        "workspace_artifact_paths": workspace_paths,
+        "html_artifact_path": payload.get("html_artifact_path"),
+        "json_artifact_path": payload.get("artifact_path"),
+    }
+    if html_workspace_path:
+        compact["open_hint"] = f"Open {html_workspace_path} in the Workspace Files panel to view the chart."
+    return {key: value for key, value in compact.items() if value not in (None, {}, [])}
 
 
 if __name__ == "__main__":

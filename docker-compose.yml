@@ -91,6 +91,7 @@ services:
       MCP_PRESETS_SEED_PATH: /opt/data/assets/mcp-presets.seed.json
     volumes:
       - ./services/hermes-workspace:/opt/data
+      - ./artifacts:/opt/data/workspace/artifacts
     ports:
       - "127.0.0.1:3000:3000"
       - "127.0.0.1:8642:8642"

@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from decimal import Decimal
+from html import escape
 import json
 from os import getenv
 from pathlib import Path
@@ -487,7 +488,24 @@ def chart_candles(request: ChartRequest) -> dict[str, Any]:
         "summary": _bar_summary(bars),
     }
     artifact_path = _write_artifact("candles", request.symbol.upper(), chart)
-    return {**chart, "artifact_path": artifact_path}
+    html_artifact_path = _write_html_artifact(
+        "candles",
+        request.symbol.upper(),
+        _render_candles_html(chart),
+    )
+    return {
+        **chart,
+        "artifact_path": artifact_path,
+        "html_artifact_path": html_artifact_path,
+        "artifact_paths": {
+            "json": artifact_path,
+            "html": html_artifact_path,
+        },
+        "workspace_artifact_paths": {
+            "json": _workspace_artifact_path(artifact_path),
+            "html": _workspace_artifact_path(html_artifact_path),
+        },
+    }
 
 
 @app.post("/charts/equity-curve")
@@ -519,7 +537,24 @@ def chart_equity_curve(backtest_run_id: int | None = None) -> dict[str, Any]:
         points.append({"timestamp": row.get("exit_at"), "equity": equity, "symbol": row.get("symbol")})
     chart = {"type": "equity_curve", "backtest_run_id": backtest_run_id, "points": points}
     artifact_path = _write_artifact("equity-curve", str(backtest_run_id or "latest"), chart)
-    return {**chart, "artifact_path": artifact_path}
+    html_artifact_path = _write_html_artifact(
+        "equity-curve",
+        str(backtest_run_id or "latest"),
+        _render_equity_curve_html(chart),
+    )
+    return {
+        **chart,
+        "artifact_path": artifact_path,
+        "html_artifact_path": html_artifact_path,
+        "artifact_paths": {
+            "json": artifact_path,
+            "html": html_artifact_path,
+        },
+        "workspace_artifact_paths": {
+            "json": _workspace_artifact_path(artifact_path),
+            "html": _workspace_artifact_path(html_artifact_path),
+        },
+    }
 
 
 @app.post("/reports/symbol")
@@ -549,6 +584,8 @@ def symbol_report(request: ChartRequest) -> dict[str, Any]:
         "features": features,
         "recent_decisions": [dict(row) for row in decisions],
         "chart_artifact_path": bars["artifact_path"],
+        "chart_html_artifact_path": bars["html_artifact_path"],
+        "chart_workspace_artifact_paths": bars["workspace_artifact_paths"],
     }
     artifact_path = _write_artifact("symbol-report", request.symbol.upper(), report)
     return {**report, "artifact_path": artifact_path}
@@ -1329,6 +1366,303 @@ def _write_artifact(kind: str, name: str, payload: dict[str, Any]) -> str:
     path = artifact_dir / f"{kind}-{safe_name}-{timestamp}.json"
     path.write_text(json.dumps(payload, default=str, indent=2), encoding="utf-8")
     return str(path)
+
+
+def _write_html_artifact(kind: str, name: str, html: str) -> str:
+    artifact_dir = Path(getenv("ARTIFACT_DIR", "/artifacts"))
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in name)
+    timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+    path = artifact_dir / f"{kind}-{safe_name}-{timestamp}.html"
+    path.write_text(html, encoding="utf-8")
+    return str(path)
+
+
+def _workspace_artifact_path(artifact_path: str) -> str:
+    artifact_dir = Path(getenv("ARTIFACT_DIR", "/artifacts")).resolve()
+    try:
+        relative = Path(artifact_path).resolve().relative_to(artifact_dir)
+    except ValueError:
+        return artifact_path
+    return f"workspace/artifacts/{relative.as_posix()}"
+
+
+def _render_candles_html(chart: dict[str, Any]) -> str:
+    bars = chart.get("bars") or []
+    symbol = str(chart.get("symbol") or "")
+    timeframe = str(chart.get("timeframe") or "")
+    summary = chart.get("summary") or {}
+    if not bars:
+        return _html_page(f"{symbol} Candles", "<p>No bars available for this chart.</p>")
+
+    parsed = [_parse_bar_for_chart(bar) for bar in bars]
+    prices = [price for bar in parsed for price in (bar["open"], bar["high"], bar["low"], bar["close"])]
+    volumes = [bar["volume"] for bar in parsed]
+    min_price = min(prices)
+    max_price = max(prices)
+    price_padding = (max_price - min_price) * 0.08 or max(max_price * 0.01, 1.0)
+    min_price -= price_padding
+    max_price += price_padding
+
+    width = max(960, len(parsed) * 11)
+    height = 560
+    left = 72
+    right = 24
+    top = 48
+    price_bottom = 410
+    volume_top = 438
+    volume_bottom = 520
+    plot_width = width - left - right
+    candle_slot = plot_width / max(len(parsed), 1)
+    candle_width = max(3, min(10, candle_slot * 0.62))
+    max_volume = max(volumes) or 1.0
+
+    def y_price(value: float) -> float:
+        return price_bottom - ((value - min_price) / (max_price - min_price)) * (price_bottom - top)
+
+    def y_volume(value: float) -> float:
+        return volume_bottom - (value / max_volume) * (volume_bottom - volume_top)
+
+    grid = []
+    for idx in range(6):
+        y = top + idx * ((price_bottom - top) / 5)
+        price = max_price - idx * ((max_price - min_price) / 5)
+        grid.append(
+            f'<line x1="{left}" y1="{y:.2f}" x2="{width - right}" y2="{y:.2f}" class="grid" />'
+            f'<text x="14" y="{y + 4:.2f}" class="axis">${price:,.2f}</text>'
+        )
+
+    candles = []
+    date_labels = []
+    for index, bar in enumerate(parsed):
+        x = left + index * candle_slot + candle_slot / 2
+        color_class = "up" if bar["close"] >= bar["open"] else "down"
+        high_y = y_price(bar["high"])
+        low_y = y_price(bar["low"])
+        open_y = y_price(bar["open"])
+        close_y = y_price(bar["close"])
+        body_top = min(open_y, close_y)
+        body_height = max(abs(close_y - open_y), 1.5)
+        vol_y = y_volume(bar["volume"])
+        candles.append(
+            f'<line x1="{x:.2f}" y1="{high_y:.2f}" x2="{x:.2f}" y2="{low_y:.2f}" class="wick {color_class}" />'
+            f'<rect x="{x - candle_width / 2:.2f}" y="{body_top:.2f}" width="{candle_width:.2f}" height="{body_height:.2f}" class="candle {color_class}">'
+            f'<title>{escape(bar["label"])} O:{bar["open"]:.2f} H:{bar["high"]:.2f} L:{bar["low"]:.2f} C:{bar["close"]:.2f} V:{bar["volume"]:,.0f}</title>'
+            f"</rect>"
+            f'<rect x="{x - candle_width / 2:.2f}" y="{vol_y:.2f}" width="{candle_width:.2f}" height="{volume_bottom - vol_y:.2f}" class="volume {color_class}" />'
+        )
+        if index in {0, len(parsed) // 2, len(parsed) - 1}:
+            date_labels.append(f'<text x="{x:.2f}" y="546" class="axis middle">{escape(bar["short_label"])}</text>')
+
+    return_pct = float(summary.get("return_pct") or 0.0)
+    stats = (
+        f'<div class="stats">'
+        f'<span>Bars <strong>{int(summary.get("count") or 0)}</strong></span>'
+        f'<span>First close <strong>${float(summary.get("first_close") or 0):,.2f}</strong></span>'
+        f'<span>Last close <strong>${float(summary.get("last_close") or 0):,.2f}</strong></span>'
+        f'<span>Return <strong class="{ "pos" if return_pct >= 0 else "neg" }">{return_pct * 100:.2f}%</strong></span>'
+        f"</div>"
+    )
+    svg = (
+        f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="{escape(symbol)} candle chart">'
+        f'<text x="{left}" y="28" class="title">{escape(symbol)} {escape(timeframe)} Candles</text>'
+        f'{"".join(grid)}'
+        f'<line x1="{left}" y1="{price_bottom}" x2="{width - right}" y2="{price_bottom}" class="axis-line" />'
+        f'<line x1="{left}" y1="{volume_bottom}" x2="{width - right}" y2="{volume_bottom}" class="axis-line" />'
+        f'{"".join(candles)}'
+        f'{"".join(date_labels)}'
+        f"</svg>"
+    )
+    return _html_page(f"{symbol} Candle Chart", stats + svg)
+
+
+def _render_equity_curve_html(chart: dict[str, Any]) -> str:
+    points = chart.get("points") or []
+    if not points:
+        return _html_page("Equity Curve", "<p>No backtest trades available for this chart.</p>")
+
+    values = [float(point.get("equity") or 0.0) for point in points]
+    min_value = min(values)
+    max_value = max(values)
+    padding = (max_value - min_value) * 0.12 or 1.0
+    min_value -= padding
+    max_value += padding
+    width = max(960, len(points) * 8)
+    height = 520
+    left = 72
+    right = 24
+    top = 48
+    bottom = 448
+    plot_width = width - left - right
+
+    def x_value(index: int) -> float:
+        return left + (index / max(len(points) - 1, 1)) * plot_width
+
+    def y_value(value: float) -> float:
+        return bottom - ((value - min_value) / (max_value - min_value)) * (bottom - top)
+
+    path_points = [f"{x_value(index):.2f},{y_value(value):.2f}" for index, value in enumerate(values)]
+    grid = []
+    for idx in range(6):
+        y = top + idx * ((bottom - top) / 5)
+        value = max_value - idx * ((max_value - min_value) / 5)
+        grid.append(
+            f'<line x1="{left}" y1="{y:.2f}" x2="{width - right}" y2="{y:.2f}" class="grid" />'
+            f'<text x="14" y="{y + 4:.2f}" class="axis">${value:,.2f}</text>'
+        )
+    markers = [
+        f'<circle cx="{x_value(index):.2f}" cy="{y_value(value):.2f}" r="3" class="marker">'
+        f'<title>{escape(str(points[index].get("timestamp") or ""))} {escape(str(points[index].get("symbol") or ""))}: ${value:,.2f}</title>'
+        f"</circle>"
+        for index, value in enumerate(values)
+    ]
+    final = values[-1]
+    stats = (
+        f'<div class="stats">'
+        f'<span>Trades <strong>{len(points)}</strong></span>'
+        f'<span>Final P/L <strong class="{ "pos" if final >= 0 else "neg" }">${final:,.2f}</strong></span>'
+        f'<span>Low <strong>${min(values):,.2f}</strong></span>'
+        f'<span>High <strong>${max(values):,.2f}</strong></span>'
+        f"</div>"
+    )
+    svg = (
+        f'<svg viewBox="0 0 {width} {height}" role="img" aria-label="Backtest equity curve">'
+        f'<text x="{left}" y="28" class="title">Backtest Equity Curve</text>'
+        f'{"".join(grid)}'
+        f'<polyline points="{" ".join(path_points)}" class="line" />'
+        f'{"".join(markers)}'
+        f"</svg>"
+    )
+    return _html_page("Backtest Equity Curve", stats + svg)
+
+
+def _parse_bar_for_chart(bar: dict[str, Any]) -> dict[str, Any]:
+    timestamp = str(bar.get("timestamp") or bar.get("captured_at") or "")
+    return {
+        "label": timestamp,
+        "short_label": timestamp[:10] if timestamp else "",
+        "open": float(bar.get("open") or 0.0),
+        "high": float(bar.get("high") or 0.0),
+        "low": float(bar.get("low") or 0.0),
+        "close": float(bar.get("close") or 0.0),
+        "volume": float(bar.get("volume") or 0.0),
+    }
+
+
+def _html_page(title: str, body: str) -> str:
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(title)}</title>
+  <style>
+    :root {{
+      color-scheme: dark;
+      --bg: #061b18;
+      --panel: #092821;
+      --grid: #214740;
+      --text: #e2fff4;
+      --muted: #8bd7c7;
+      --up: #35d39d;
+      --down: #ff5b6e;
+      --line: #8fd3ff;
+    }}
+    body {{
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    main {{
+      width: min(1200px, calc(100vw - 32px));
+      margin: 24px auto;
+      padding: 20px;
+      background: var(--panel);
+      border: 1px solid #2d675c;
+      border-radius: 8px;
+    }}
+    svg {{
+      display: block;
+      width: 100%;
+      height: auto;
+      overflow: visible;
+    }}
+    .title {{
+      fill: var(--text);
+      font-size: 20px;
+      font-weight: 700;
+    }}
+    .axis {{
+      fill: var(--muted);
+      font-size: 12px;
+    }}
+    .middle {{
+      text-anchor: middle;
+    }}
+    .axis-line, .grid {{
+      stroke: var(--grid);
+      stroke-width: 1;
+    }}
+    .grid {{
+      opacity: 0.72;
+    }}
+    .wick.up, .candle.up {{
+      stroke: var(--up);
+      fill: var(--up);
+    }}
+    .wick.down, .candle.down {{
+      stroke: var(--down);
+      fill: var(--down);
+    }}
+    .wick {{
+      stroke-width: 1.5;
+    }}
+    .volume {{
+      opacity: 0.32;
+    }}
+    .line {{
+      fill: none;
+      stroke: var(--line);
+      stroke-width: 2.5;
+    }}
+    .marker {{
+      fill: var(--line);
+      stroke: var(--bg);
+      stroke-width: 1;
+    }}
+    .stats {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+      color: var(--muted);
+      font-size: 13px;
+    }}
+    .stats span {{
+      padding: 6px 8px;
+      border: 1px solid #2d675c;
+      border-radius: 6px;
+      background: #061f1b;
+    }}
+    strong {{
+      color: var(--text);
+    }}
+    .pos {{
+      color: var(--up);
+    }}
+    .neg {{
+      color: var(--down);
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    {body}
+  </main>
+</body>
+</html>
+"""
 
 
 def _ensure_paper_orders_runtime_schema(conn: Any) -> None:
