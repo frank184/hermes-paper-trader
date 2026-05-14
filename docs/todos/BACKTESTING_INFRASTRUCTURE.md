@@ -72,12 +72,22 @@ Anti-overfitting requirements:
 - Record when a result depends on narrow or fragile parameter values.
 - Keep `random_baseline` available as a control, not a recommendation strategy.
 
+Live-vs-backtest validation requirements:
+
+- Compare expected return against paper outcome over the intended holding period.
+- Compare expected hold period against actual hold period.
+- Compare expected drawdown/risk against observed drawdown while the trade was open.
+- Compare simulated fill assumptions against paper fill price, fill time, and order status.
+- Track strategy drift when recent paper outcomes materially diverge from backtest assumptions.
+
 ## UI/Workflow
 
 - Dashboard users choose universe, strategy, date range, initial cash, benchmark, and parameter values.
 - Users can run a single backtest, then run a sweep around the same configuration.
 - Results show equity curve, benchmark curve, drawdown, trade log, per-symbol metrics, and generated labels.
 - Sweeps rank configs by robust metrics, not only final P/L.
+- Parameter controls should support sliders/ranges, saved presets, before/after comparisons, and quick `-20%`/base/`+20%` robustness checks.
+- Validation views should show whether paper trades behaved like the matching backtest cohort.
 
 ## Test Plan
 
@@ -87,6 +97,8 @@ Anti-overfitting requirements:
 - Verify train/test splits produce separate metrics.
 - Verify sweep results persist and can be reloaded by dashboard and MCP.
 - Verify generated labels are linked to feature version, strategy version, and source backtest.
+- Verify paper outcomes can be joined back to backtest expectations by strategy, symbol, regime, and intended holding period.
+- Verify parameter perturbation checks identify fragile configs that only work at one narrow setting.
 
 ## Assumptions
 
