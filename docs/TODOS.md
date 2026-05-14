@@ -6,32 +6,24 @@ The main sequencing rule: stabilize data, backtesting, and reporting before buil
 
 This project remains educational paper-trading infrastructure, not investment advice or a recommendation to trade any security.
 
-## Priority 1: Data Access Foundation
+## Completed Foundations
+
+### Data Access Foundation
 
 Detailed plan: [Data Access Strategy](todos/DATA_ACCESS_STRATEGY.md)
 
-Why first:
+Implemented:
 
-- Every other feature needs a clear answer to "use Postgres, pull Alpaca, or stream live?"
-- Backtests need reproducible data.
-- Dashboard views need freshness metadata.
-- Reports need to say whether they used persisted, fresh, or mixed data.
+- Market bars reuse fresh persisted rows before pulling Alpaca.
+- `force_refresh` and `persist` behavior exists on market-data and backtest paths.
+- Market bars, charts, backtests, and reports expose `data_access` metadata.
+- Portfolio/account, positions, orders, and market clock responses expose freshness metadata.
+- Postgres-only `/data/*` read endpoints exist for dashboard and notebook consumers.
+- Alpaca access remains inside `trading-orchestrator`.
 
-Initial implementation slice:
+Future streaming work remains tracked in the detailed strategy doc, but the foundation is no longer an active roadmap priority.
 
-- Add freshness metadata to market-data responses.
-- Add `force_refresh` and `persist` behavior where market data is fetched.
-- Record whether rows were served from Postgres, fetched from Alpaca, or mixed.
-- Define freshness windows for daily bars, intraday bars, account state, positions, orders, and assets.
-- Keep all Alpaca data access inside `trading-orchestrator`.
-
-Done when:
-
-- A chart/backtest/report can explain what data source it used.
-- Missing market bars are pulled and persisted through the orchestrator.
-- Existing persisted bars are reused when fresh enough.
-
-## Priority 2: Backtesting Infrastructure
+## Priority 1: Backtesting Infrastructure
 
 Detailed plan: [Backtesting Infrastructure](todos/BACKTESTING_INFRASTRUCTURE.md)
 
@@ -56,7 +48,7 @@ Done when:
 - A run can be listed, opened, charted, and inspected without rerunning.
 - Sweep results can be compared and ranked by robust metrics, not only final P/L.
 
-## Priority 3: Observability And Reporting
+## Priority 2: Observability And Reporting
 
 Detailed plan: [Observability And Reporting](todos/OBSERVABILITY_REPORTING.md)
 
@@ -80,7 +72,7 @@ Done when:
 - A trade review explains why a decision happened and whether the result matched expectations.
 - Reports are saved as artifacts and can later be rendered by the dashboard.
 
-## Priority 4: Minimal Trader Dashboard
+## Priority 3: Minimal Trader Dashboard
 
 Detailed plan: [Trader Dashboard](todos/TRADER_DASHBOARD.md)
 
@@ -113,7 +105,7 @@ Done when:
 - The dashboard never owns Alpaca credentials.
 - The dashboard talks only to `trading-orchestrator`.
 
-## Priority 5: Strategy Autonomy
+## Priority 4: Strategy Autonomy
 
 Detailed plan: [Strategy Autonomy](todos/STRATEGY_AUTONOMY.md)
 
@@ -147,14 +139,12 @@ Done when:
 - Random strategies are control baselines only, never autonomous order strategies.
 - Dashboard and Hermes should render summaries, reports, and charts, but should not bypass policy or persistence.
 
-## Suggested First Pull Request
+## Suggested Next Pull Request
 
-Build Priority 1 plus a thin part of Priority 2:
+Build Priority 1:
 
-- Add market-data freshness metadata.
-- Add `force_refresh` behavior.
 - Persist full backtest config payloads.
 - Add equity curve point and run metric storage.
 - Add read endpoints for backtest runs and trades.
 
-That PR gives the project stable backend objects that the dashboard, reports, and autonomy work can use without immediate rewrites.
+That PR gives the project stable backtest objects that the dashboard, reports, and autonomy work can use without immediate rewrites.

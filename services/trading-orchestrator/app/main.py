@@ -53,6 +53,7 @@ def health() -> dict[str, str]:
 @app.get("/portfolio/state")
 def portfolio_state() -> dict[str, Any]:
     client = AlpacaPaperClient(get_settings())
+    fetched_at = datetime.now(UTC)
     account = client.get_account()
     with connect() as conn:
         conn.execute(
@@ -67,12 +68,22 @@ def portfolio_state() -> dict[str, Any]:
                 Jsonb(account),
             ),
         )
-    return account
+    return {
+        **account,
+        "data_access": _snapshot_data_access_metadata(
+            data_class="account",
+            source="fetched",
+            rows_returned=1,
+            fetched_at=fetched_at,
+            latest_persisted_at=fetched_at,
+        ),
+    }
 
 
 @app.get("/portfolio/positions")
 def portfolio_positions() -> dict[str, Any]:
     client = AlpacaPaperClient(get_settings())
+    fetched_at = datetime.now(UTC)
     positions = client.get_positions()
     with connect() as conn:
         _ensure_position_snapshots_table(conn)
@@ -98,6 +109,13 @@ def portfolio_positions() -> dict[str, Any]:
         "count": len(positions),
         "symbols": [position.get("symbol") for position in positions],
         "positions": positions,
+        "data_access": _snapshot_data_access_metadata(
+            data_class="positions",
+            source="fetched",
+            rows_returned=len(positions),
+            fetched_at=fetched_at,
+            latest_persisted_at=fetched_at,
+        ),
     }
 
 
@@ -109,6 +127,7 @@ def orders(
     side: str | None = Query(default=None, pattern="^(buy|sell)$"),
 ) -> dict[str, Any]:
     client = AlpacaPaperClient(get_settings())
+    fetched_at = datetime.now(UTC)
     symbol_list = _parse_symbol_filter(symbols)
     orders = client.get_orders(status=status, limit=limit, symbols=symbol_list, side=side)
     with connect() as conn:
@@ -119,6 +138,13 @@ def orders(
         "status": status,
         "symbols": symbol_list or [],
         "orders": orders,
+        "data_access": _snapshot_data_access_metadata(
+            data_class="orders",
+            source="fetched",
+            rows_returned=len(orders),
+            fetched_at=fetched_at,
+            latest_persisted_at=fetched_at,
+        ),
     }
 
 
@@ -151,7 +177,167 @@ def cancel_order(order_id: str) -> dict[str, Any]:
 @app.get("/market/clock")
 def market_clock() -> dict[str, Any]:
     client = AlpacaPaperClient(get_settings())
-    return client.get_clock()
+    fetched_at = datetime.now(UTC)
+    clock = client.get_clock()
+    return {
+        **clock,
+        "data_access": _snapshot_data_access_metadata(
+            data_class="market_clock",
+            source="fetched",
+            rows_returned=1,
+            fetched_at=fetched_at,
+            latest_persisted_at=fetched_at,
+        ),
+    }
+
+
+@app.get("/data/market-bars")
+def data_market_bars(
+    symbol: str | None = Query(default=None),
+    timeframe: str | None = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=10000),
+) -> dict[str, Any]:
+    with connect() as conn:
+        ensure_runtime_schema(conn)
+        where = []
+        params: list[Any] = []
+        if symbol:
+            where.append("symbol = %s")
+            params.append(symbol.upper())
+        if timeframe:
+            where.append("timeframe = %s")
+            params.append(timeframe)
+        where_sql = f"where {' and '.join(where)}" if where else ""
+        rows = conn.execute(
+            f"""
+            select symbol, timeframe, timestamp, open, high, low, close, volume, raw, source, created_at
+            from market_bars
+            {where_sql}
+            order by timestamp desc
+            limit %s
+            """,
+            (*params, limit),
+        ).fetchall()
+    latest_at = max((row.get("created_at") for row in rows if row.get("created_at")), default=None)
+    return {
+        "count": len(rows),
+        "bars": [_serialize_row(row) for row in rows],
+        "data_access": _snapshot_data_access_metadata(
+            data_class="market_bars",
+            source="persisted",
+            rows_returned=len(rows),
+            latest_persisted_at=latest_at,
+        ),
+    }
+
+
+@app.get("/data/portfolio-snapshots")
+def data_portfolio_snapshots(limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            select *
+            from portfolio_snapshots
+            order by captured_at desc
+            limit %s
+            """,
+            (limit,),
+        ).fetchall()
+    latest_at = max((row.get("captured_at") for row in rows if row.get("captured_at")), default=None)
+    return {
+        "count": len(rows),
+        "snapshots": [_serialize_row(row) for row in rows],
+        "data_access": _snapshot_data_access_metadata(
+            data_class="account",
+            source="persisted",
+            rows_returned=len(rows),
+            latest_persisted_at=latest_at,
+        ),
+    }
+
+
+@app.get("/data/position-snapshots")
+def data_position_snapshots(
+    symbol: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> dict[str, Any]:
+    with connect() as conn:
+        _ensure_position_snapshots_table(conn)
+        if symbol:
+            rows = conn.execute(
+                """
+                select *
+                from position_snapshots
+                where symbol = %s
+                order by captured_at desc
+                limit %s
+                """,
+                (symbol.upper(), limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                select *
+                from position_snapshots
+                order by captured_at desc
+                limit %s
+                """,
+                (limit,),
+            ).fetchall()
+    latest_at = max((row.get("captured_at") for row in rows if row.get("captured_at")), default=None)
+    return {
+        "count": len(rows),
+        "snapshots": [_serialize_row(row) for row in rows],
+        "data_access": _snapshot_data_access_metadata(
+            data_class="positions",
+            source="persisted",
+            rows_returned=len(rows),
+            latest_persisted_at=latest_at,
+        ),
+    }
+
+
+@app.get("/data/paper-orders")
+def data_paper_orders(
+    symbol: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> dict[str, Any]:
+    with connect() as conn:
+        _ensure_paper_orders_runtime_schema(conn)
+        where = []
+        params: list[Any] = []
+        if symbol:
+            where.append("symbol = %s")
+            params.append(symbol.upper())
+        if status:
+            where.append("status = %s")
+            params.append(status)
+        where_sql = f"where {' and '.join(where)}" if where else ""
+        rows = conn.execute(
+            f"""
+            select *
+            from paper_orders
+            {where_sql}
+            order by coalesce(updated_at, created_at) desc
+            limit %s
+            """,
+            (*params, limit),
+        ).fetchall()
+    latest_at = max(
+        ((row.get("updated_at") or row.get("created_at")) for row in rows if row.get("updated_at") or row.get("created_at")),
+        default=None,
+    )
+    return {
+        "count": len(rows),
+        "orders": [_serialize_row(row) for row in rows],
+        "data_access": _snapshot_data_access_metadata(
+            data_class="orders",
+            source="persisted",
+            rows_returned=len(rows),
+            latest_persisted_at=latest_at,
+        ),
+    }
 
 
 @app.get("/symbols")
@@ -557,13 +743,18 @@ def chart_candles(request: ChartRequest) -> dict[str, Any]:
             persist=request.persist,
         )
     )
-    bars = bars_response["symbols"].get(request.symbol.upper(), {}).get("bars", [])
+    symbol_bar_payload = bars_response["symbols"].get(request.symbol.upper(), {})
+    bars = symbol_bar_payload.get("bars", [])
     chart = {
         "type": "candles",
         "symbol": request.symbol.upper(),
         "timeframe": request.timeframe,
         "bars": bars,
         "summary": _bar_summary(bars),
+        "data_access": {
+            "market_bars": symbol_bar_payload.get("data_access", {}),
+            "source_counts": bars_response.get("data_access", {}).get("source_counts", {}),
+        },
     }
     artifact_path = _write_artifact("candles", request.symbol.upper(), chart)
     html_artifact_path = _write_html_artifact(
@@ -629,7 +820,18 @@ def chart_equity_curve(backtest_run_id: int | None = None) -> dict[str, Any]:
     for row in rows:
         equity += float(row.get("pnl") or 0.0)
         points.append({"timestamp": row.get("exit_at"), "equity": equity, "symbol": row.get("symbol")})
-    chart = {"type": "equity_curve", "backtest_run_id": backtest_run_id, "points": points}
+    latest_at = max((row.get("created_at") for row in rows if row.get("created_at")), default=None)
+    chart = {
+        "type": "equity_curve",
+        "backtest_run_id": backtest_run_id,
+        "points": points,
+        "data_access": _snapshot_data_access_metadata(
+            data_class="backtest_trades",
+            source="persisted",
+            rows_returned=len(rows),
+            latest_persisted_at=latest_at,
+        ),
+    }
     artifact_path = _write_artifact("equity-curve", str(backtest_run_id or "latest"), chart)
     html_artifact_path = _write_html_artifact(
         "equity-curve",
@@ -688,11 +890,21 @@ def symbol_report(request: ChartRequest) -> dict[str, Any]:
             """,
             (request.symbol.upper(),),
         ).fetchall()
+    latest_decision_at = max((row.get("created_at") for row in decisions if row.get("created_at")), default=None)
     report = {
         "symbol": request.symbol.upper(),
         "bar_summary": bars["summary"],
         "features": features,
         "recent_decisions": [dict(row) for row in decisions],
+        "data_access": {
+            "market_bars": bars.get("data_access", {}),
+            "recent_decisions": _snapshot_data_access_metadata(
+                data_class="decisions",
+                source="persisted",
+                rows_returned=len(decisions),
+                latest_persisted_at=latest_decision_at,
+            ),
+        },
         "chart_artifact_path": bars["artifact_path"],
         "chart_html_artifact_path": bars["html_artifact_path"],
         "chart_svg_artifact_path": bars["svg_artifact_path"],
@@ -712,6 +924,11 @@ def portfolio_report() -> dict[str, Any]:
         "account": account,
         "positions": positions,
         "open_orders": orders_snapshot,
+        "data_access": {
+            "account": account.get("data_access", {}),
+            "positions": positions.get("data_access", {}),
+            "open_orders": orders_snapshot.get("data_access", {}),
+        },
     }
     artifact_path = _write_artifact("portfolio-report", "latest", report)
     return {**report, "artifact_path": artifact_path}
@@ -1477,6 +1694,63 @@ def _merge_data_access_counts(runs: list[dict[str, Any]]) -> dict[str, Any]:
     return {"source_counts": counts}
 
 
+def _snapshot_data_access_metadata(
+    *,
+    data_class: str,
+    source: str,
+    rows_returned: int,
+    latest_persisted_at: datetime | None = None,
+    fetched_at: datetime | None = None,
+) -> dict[str, Any]:
+    reference_at = fetched_at or latest_persisted_at
+    age_seconds = (
+        (datetime.now(UTC) - _as_aware_utc(reference_at)).total_seconds()
+        if reference_at
+        else None
+    )
+    max_age_seconds = _data_class_freshness_max_age_seconds(data_class)
+    return {
+        "data_class": data_class,
+        "source": source,
+        "rows_returned": rows_returned,
+        "fetched_at": _iso_timestamp(fetched_at),
+        "latest_persisted_at": _iso_timestamp(latest_persisted_at),
+        "freshness": {
+            "age_seconds": age_seconds,
+            "max_age_seconds": max_age_seconds,
+            "fresh": age_seconds is not None and age_seconds <= max_age_seconds,
+        },
+    }
+
+
+def _data_class_freshness_max_age_seconds(data_class: str) -> int:
+    return {
+        "account": 30,
+        "positions": 30,
+        "orders": 30,
+        "market_clock": 10,
+        "market_bars": _freshness_max_age_seconds("1Day"),
+        "backtest_trades": 24 * 60 * 60,
+        "decisions": 24 * 60 * 60,
+    }.get(data_class, 5 * 60)
+
+
+def _serialize_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {key: _serialize_value(value) for key, value in dict(row).items()}
+
+
+def _serialize_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return _iso_timestamp(value)
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, list):
+        return [_serialize_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _serialize_value(item) for key, item in value.items()}
+    return value
+
+
 def _minimum_expected_bar_count(timeframe: str, days: int, limit: int | None) -> int:
     if _is_daily_timeframe(timeframe):
         expected = max(1, int(days * 0.55))
@@ -2153,6 +2427,8 @@ def _ensure_paper_orders_runtime_schema(conn: Any) -> None:
     conn.execute("alter table paper_orders add column if not exists expires_at timestamptz")
     conn.execute("alter table paper_orders add column if not exists expired_at timestamptz")
     conn.execute("alter table paper_orders add column if not exists canceled_at timestamptz")
+    conn.execute("alter table paper_orders add column if not exists updated_at timestamptz")
+    conn.execute("update paper_orders set updated_at = created_at where updated_at is null")
     conn.execute(
         """
         do $$
@@ -2200,8 +2476,8 @@ def _sync_orders(conn: Any, orders: list[dict[str, Any]]) -> None:
             """
             insert into paper_orders
               (alpaca_order_id, symbol, side, order_type, qty, status, submitted_at, filled_at,
-               filled_avg_price, filled_qty, expires_at, expired_at, canceled_at, raw)
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               filled_avg_price, filled_qty, expires_at, expired_at, canceled_at, raw, updated_at)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
             on conflict (alpaca_order_id) do update set
               symbol = excluded.symbol,
               side = excluded.side,
@@ -2215,7 +2491,8 @@ def _sync_orders(conn: Any, orders: list[dict[str, Any]]) -> None:
               expires_at = excluded.expires_at,
               expired_at = excluded.expired_at,
               canceled_at = excluded.canceled_at,
-              raw = excluded.raw
+              raw = excluded.raw,
+              updated_at = now()
             """,
             (
                 order.get("id"),

@@ -65,7 +65,8 @@ create table if not exists paper_orders (
   expired_at timestamptz,
   canceled_at timestamptz,
   raw jsonb not null default '{}',
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  updated_at timestamptz
 );
 
 create table if not exists trade_outcomes (

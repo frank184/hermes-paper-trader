@@ -1,5 +1,7 @@
 # Data Access Strategy Plan
 
+Status: foundation implemented. Future streaming work remains deferred.
+
 ## Summary
 
 Define when Trader should use persisted local data, when it should pull fresh data from Alpaca, and when it should stream live data. The goal is to avoid stale decisions without turning every dashboard view, model query, or report into an unnecessary API call.
@@ -57,23 +59,23 @@ Streaming output should still write meaningful snapshots or events to Postgres s
 
 ## Required Orchestrator/API Work
 
-- Add cache metadata to market responses: source, persisted row count, fetched row count, and freshness timestamp.
-- Add `force_refresh` and `persist` flags to market-data endpoints.
-- Add freshness policy helpers per data class:
+- Implemented: cache metadata on market responses, charts, backtests, and reports.
+- Implemented: `force_refresh` and `persist` flags on market-data and backtest endpoints.
+- Implemented: freshness policy helpers for:
   - account, positions, orders: short freshness window.
-  - daily bars: complete through latest market close unless forced.
+  - daily bars: reusable while fresh unless forced.
   - intraday bars: short freshness window during market hours.
-  - assets and symbol metadata: longer freshness window.
-- Add read endpoints that can answer from Postgres only for dashboards and notebooks.
-- Add future streaming endpoints or event tables without requiring dashboard changes to Alpaca credentials.
+  - market clock: very short freshness window.
+- Implemented: read endpoints that answer from Postgres only for dashboards and notebooks.
+- Deferred: future streaming endpoints or event tables without requiring dashboard changes to Alpaca credentials.
 
 ## Data Model Work
 
-- Track data freshness per symbol/timeframe/range.
-- Track ingestion source and fetch time for market bars.
-- Track account, position, and order snapshots separately from current Alpaca state.
-- Track stream events once streaming is added.
-- Track whether a report was generated from persisted data, freshly pulled data, or mixed sources.
+- Implemented: track freshness per market bar symbol/timeframe/range response.
+- Implemented: track ingestion source and fetch time for market bars.
+- Implemented: track account, position, and order snapshots separately from current Alpaca state.
+- Deferred: track stream events once streaming is added.
+- Implemented: track whether chart/report/backtest responses used persisted data, freshly pulled data, or mixed sources.
 
 ## Test Plan
 

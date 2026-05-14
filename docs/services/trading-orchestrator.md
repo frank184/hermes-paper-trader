@@ -52,6 +52,10 @@ POST /decisions/propose
 POST /ticks/run
 POST /symbols/discover
 POST /symbols/scan
+GET  /data/market-bars
+GET  /data/portfolio-snapshots
+GET  /data/position-snapshots
+GET  /data/paper-orders
 ```
 
 `/orders` reads live Alpaca paper orders and refreshes local `paper_orders` rows. This is the endpoint to use when an order is visible in Alpaca as `accepted`, `new`, `filled`, `canceled`, or similar. An accepted order with `filled_qty=0` is not a position yet.
@@ -64,7 +68,9 @@ POST /symbols/scan
 
 `/market/bars` reuses fresh persisted bars when possible and fetches from Alpaca when rows are missing, stale, or `force_refresh=true`. Responses include per-symbol `data_access` metadata showing whether rows came from Postgres, Alpaca, or a mixed path. Charts and backtests use the same path, so historical views and training-data generation can explain whether they reused local rows or refreshed from Alpaca.
 
-Chart endpoints write JSON, self-contained HTML, SVG, and PNG image artifacts into `./artifacts` through the orchestrator container's `/artifacts` mount. The same host folder is mounted into Hermes Workspace at `artifacts/`, so `chart_symbol` and `chart_backtest` responses include `workspace_artifact_paths.html` for a browser-viewable chart and `workspace_artifact_paths.png` for inline chat rendering.
+`/data/*` endpoints are Postgres-only reads for dashboards and notebooks. They never call Alpaca and return `data_access` freshness metadata so consumers can decide whether to request a fresh orchestrator pull separately.
+
+Chart and report endpoints include `data_access` metadata. Chart endpoints write JSON, self-contained HTML, SVG, and PNG image artifacts into `./artifacts` through the orchestrator container's `/artifacts` mount. The same host folder is mounted into Hermes Workspace at `artifacts/`, so `chart_symbol` and `chart_backtest` responses include `workspace_artifact_paths.html` for a browser-viewable chart and `workspace_artifact_paths.png` for inline chat rendering.
 
 `/backtests/run` fetches historical daily bars, computes features at each historical point, looks forward by `horizon_days`, and writes labeled training rows plus `backtest_trades`. It is the preferred way to seed `trade_outcomes` before the paper agent has enough real fills.
 
