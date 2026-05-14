@@ -63,10 +63,10 @@ Use hermes_trader get_market_bars for symbols=["AAPL", "MSFT", "NVDA"], timefram
 ```
 
 ```text
-Use hermes_trader chart_symbol for symbol=GOOGL, timeframe=1Day, days=180, persist=true. Include the returned chat_markdown_image verbatim so the chart renders inline, then summarize the chart.
+Use hermes_trader chart_symbol for symbol=GOOGL, timeframe=1Day, days=180, persist=true.
 ```
 
-`chat_markdown_image` may contain a `MEDIA:/...` path to a PNG artifact. Keep it exactly as returned; Hermes Workspace rewrites that marker into a same-origin image URL for chat rendering.
+`chart_symbol` returns `assistant_response_markdown`, which already includes the PNG chart image and a short summary. Use it by default; do not ask separately for `chat_markdown_image`.
 
 ```text
 Use hermes_trader get_symbol_report for symbol=GOOGL, timeframe=1Day, days=180, persist=true. Focus on whether long, short, or hold is better supported by the data.
@@ -87,7 +87,7 @@ Use hermes_trader run_backtest_sweep with universe=core, days=180, strategies=["
 ```
 
 ```text
-Use hermes_trader chart_backtest for the latest backtest run. Include the returned chat_markdown_image verbatim so the chart renders inline, then summarize the equity curve.
+Use hermes_trader chart_backtest for the latest backtest run.
 ```
 
 ## Dry-Run Decisions

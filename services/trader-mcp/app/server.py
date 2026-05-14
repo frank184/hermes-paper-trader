@@ -288,7 +288,12 @@ async def chart_symbol(
     days: int = 120,
     persist: bool = True,
 ) -> dict[str, Any]:
-    """Build a browser-viewable candle-chart artifact for one symbol."""
+    """Build a candle chart for one symbol.
+
+    Default response behavior: show the returned assistant_response_markdown directly.
+    It already includes the PNG chart image and a short chart summary, so users can ask
+    for only "chart_symbol GOOGL" without separately requesting image markdown.
+    """
     async with httpx.AsyncClient(timeout=120) as client:
         response = await client.post(
             f"{_orchestrator_url()}/charts/candles",
@@ -299,7 +304,11 @@ async def chart_symbol(
 
 @mcp.tool
 async def chart_backtest(backtest_run_id: int | None = None) -> dict[str, Any]:
-    """Build a browser-viewable equity-curve artifact from persisted backtest trades."""
+    """Build an equity-curve chart from persisted backtest trades.
+
+    Default response behavior: show the returned assistant_response_markdown directly.
+    It already includes the PNG chart image and a short chart summary.
+    """
     params = {}
     if backtest_run_id is not None:
         params["backtest_run_id"] = backtest_run_id
@@ -442,7 +451,11 @@ def _compact_chart_response(payload: dict[str, Any]) -> dict[str, Any]:
         image_url = _workspace_media_url(image_workspace_path)
         compact["chat_image_url"] = image_url
         compact["chat_markdown_image"] = f"![{payload.get('symbol') or payload.get('type') or 'Trader chart'} chart]({image_url})"
-        compact["chat_render_hint"] = "Include chat_markdown_image verbatim in the assistant response to render the PNG chart inline."
+        compact["assistant_response_markdown"] = _assistant_chart_markdown(
+            compact["chat_markdown_image"],
+            payload,
+        )
+        compact["chat_render_hint"] = "Show assistant_response_markdown by default; it already includes the PNG chart inline."
     if html_workspace_path:
         compact["open_hint"] = f"Open {html_workspace_path} in the Workspace Files panel to view the chart."
     return {key: value for key, value in compact.items() if value not in (None, {}, [])}
@@ -453,6 +466,28 @@ def _workspace_media_url(workspace_path: str) -> str:
         return f"MEDIA:{workspace_path}"
     workspace_root = getenv("HERMES_WORKSPACE_DIR", "/opt/data/workspace").rstrip("/")
     return f"MEDIA:{workspace_root}/{workspace_path.lstrip('/')}"
+
+
+def _assistant_chart_markdown(image_markdown: str, payload: dict[str, Any]) -> str:
+    summary = payload.get("summary") or {}
+    chart_type = payload.get("type")
+    if chart_type == "candles":
+        symbol = payload.get("symbol") or "symbol"
+        timeframe = payload.get("timeframe") or "timeframe"
+        count = int(summary.get("count") or len(payload.get("bars") or []))
+        first_close = float(summary.get("first_close") or 0.0)
+        last_close = float(summary.get("last_close") or 0.0)
+        return_pct = float(summary.get("return_pct") or 0.0) * 100
+        return (
+            f"{image_markdown}\n\n"
+            f"{symbol} {timeframe} chart: {count} bars, "
+            f"${first_close:,.2f} -> ${last_close:,.2f} ({return_pct:+.2f}%)."
+        )
+    if chart_type == "equity_curve":
+        points = payload.get("points") or []
+        final = float(points[-1].get("equity") or 0.0) if points else 0.0
+        return f"{image_markdown}\n\nBacktest equity curve: {len(points)} points, final P/L ${final:,.2f}."
+    return image_markdown
 
 
 if __name__ == "__main__":
